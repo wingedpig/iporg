@@ -1,0 +1,30 @@
+# Sample ASN file for iporg-build
+# One ASN per line. Lines starting with # are comments.
+# You can use "AS" prefix or just the number.
+
+# British Telecom / EE
+2856
+
+# Lumen (formerly Level 3, CenturyLink)
+3356
+
+# Datacamp Limited
+60068
+
+# Amazon
+16509
+
+# Google
+15169
+
+# Cloudflare
+13335
+
+# Hurricane Electric
+6939
+
+# Comcast
+7922
+
+# AT&T
+7018
