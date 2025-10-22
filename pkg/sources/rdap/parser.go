@@ -24,10 +24,12 @@ func ParseOrg(response *Response) (*model.RDAPOrg, error) {
 	}
 
 	// Look for entities with customer or registrant roles
-	// Prioritize: customer > org registrant > non-mnt registrant > abuse
+	// Prioritize: customer > org registrant > non-mnt registrant > administrative > technical > abuse
 	var customerEntity *Entity
 	var orgRegistrantEntity *Entity
 	var registrantEntity *Entity
+	var adminEntity *Entity
+	var technicalEntity *Entity
 	var abuseEntity *Entity
 
 	for i := range response.Entities {
@@ -52,13 +54,29 @@ func ParseOrg(response *Response) (*model.RDAPOrg, error) {
 				} else if registrantEntity == nil {
 					registrantEntity = entity
 				}
+			} else if roleLower == "administrative" {
+				if adminEntity == nil {
+					adminEntity = entity
+				}
+			} else if roleLower == "technical" {
+				if technicalEntity == nil {
+					technicalEntity = entity
+				}
 			} else if roleLower == "abuse" {
 				abuseEntity = entity
 			}
 		}
 	}
 
-	// Prefer customer, then org registrant, then registrant, then abuse
+	// Check if network name looks like a good organization name
+	// (not a technical code, has meaningful content)
+	hasGoodNetworkName := response.Name != "" &&
+		!strings.HasSuffix(response.Name, "-MNT") &&
+		len(response.Name) > 3 &&
+		!strings.HasPrefix(response.Name, "UK-")
+
+	// Prefer customer, then org registrant, then registrant, then network name (if good),
+	// then administrative, then technical, then abuse
 	var selectedEntity *Entity
 	if customerEntity != nil {
 		selectedEntity = customerEntity
@@ -69,6 +87,18 @@ func ParseOrg(response *Response) (*model.RDAPOrg, error) {
 	} else if registrantEntity != nil {
 		selectedEntity = registrantEntity
 		org.SourceRole = "registrant"
+	} else if hasGoodNetworkName {
+		// Use network name directly
+		org.OrgName = response.Name
+		org.SourceRole = "network_name"
+		log.Printf("INFO: Using network name as organization: %s", response.Name)
+		return org, nil
+	} else if adminEntity != nil {
+		selectedEntity = adminEntity
+		org.SourceRole = "administrative"
+	} else if technicalEntity != nil {
+		selectedEntity = technicalEntity
+		org.SourceRole = "technical"
 	} else if abuseEntity != nil {
 		selectedEntity = abuseEntity
 		org.SourceRole = "abuse"
@@ -102,11 +132,14 @@ func ParseOrg(response *Response) (*model.RDAPOrg, error) {
 		}
 	}
 
-	// Fallback: use network name from response
-	if org.OrgName == "" && response.Name != "" {
-		org.OrgName = response.Name
-		org.SourceRole = "network_name"
-		log.Printf("INFO: Using network name: %s", response.Name)
+	// Fallback chain if we still don't have an org name
+	if org.OrgName == "" {
+		// Try network name first (like "BT-Central-Plus")
+		if response.Name != "" && !strings.HasSuffix(response.Name, "-MNT") {
+			org.OrgName = response.Name
+			org.SourceRole = "network_name"
+			log.Printf("INFO: Using network name: %s", response.Name)
+		}
 	}
 
 	// If still no org name, check remarks for hints
