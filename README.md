@@ -356,6 +356,36 @@ MIT License - see LICENSE file for details
 
 When using this tool, ensure you comply with all applicable data source licenses, especially MaxMind's attribution requirements.
 
+## Using as a Library
+
+You can import and use `iporgdb` in your own Go projects. See [examples/library-usage/](examples/library-usage/) for complete examples including:
+
+- Simple IP lookups
+- JSON output
+- Bulk/concurrent processing
+- HTTP API server
+- Filtering by country
+
+**Quick example:**
+
+```go
+import (
+    "github.com/yourusername/iporg/pkg/iporgdb"
+    "github.com/yourusername/iporg/pkg/model"
+)
+
+db, _ := iporgdb.Open("/var/groupsio/data/iporgdb")
+defer db.Close()
+
+rec, err := db.LookupString("86.150.233.24")
+if err == model.ErrNotFound {
+    // IP not found
+}
+// Use rec.OrgName, rec.ASN, rec.Country, etc.
+```
+
+See the [library usage examples](examples/library-usage/README.md) for more details.
+
 ## Contributing
 
 Contributions welcome! Please:
