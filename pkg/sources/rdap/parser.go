@@ -75,8 +75,11 @@ func ParseOrg(response *Response) (*model.RDAPOrg, error) {
 		len(response.Name) > 3 &&
 		!strings.HasPrefix(response.Name, "UK-")
 
-	// Prefer customer, then org registrant, then registrant, then network name (if good),
-	// then administrative, then technical, then abuse
+	// Check for customer info in remarks (like "FTIP004051138 TBS ENGINEERING")
+	remarkOrg := extractOrgFromRemarks(response)
+
+	// Prefer customer, then org registrant, then registrant, then remarks (if detailed),
+	// then network name (if good), then administrative, then technical, then abuse
 	var selectedEntity *Entity
 	if customerEntity != nil {
 		selectedEntity = customerEntity
@@ -87,6 +90,12 @@ func ParseOrg(response *Response) (*model.RDAPOrg, error) {
 	} else if registrantEntity != nil {
 		selectedEntity = registrantEntity
 		org.SourceRole = "registrant"
+	} else if remarkOrg != "" {
+		// Use detailed org from remarks (includes customer IDs)
+		org.OrgName = remarkOrg
+		org.SourceRole = "remark"
+		log.Printf("INFO: Using remark as organization: %s", remarkOrg)
+		return org, nil
 	} else if hasGoodNetworkName {
 		// Use network name directly
 		org.OrgName = response.Name
@@ -158,22 +167,13 @@ func ParseOrg(response *Response) (*model.RDAPOrg, error) {
 }
 
 // extractOrgFromRemarks tries to extract organization info from remarks
+// Returns the first non-empty remark line
 func extractOrgFromRemarks(response *Response) string {
 	for _, remark := range response.Remarks {
-		// Look for descriptions that might contain org info
 		for _, desc := range remark.Description {
-			// Common patterns in RIPE remarks
-			if strings.Contains(strings.ToLower(desc), "org-name:") {
-				parts := strings.SplitN(desc, ":", 2)
-				if len(parts) == 2 {
-					return strings.TrimSpace(parts[1])
-				}
-			}
-			if strings.Contains(strings.ToLower(desc), "organisation:") {
-				parts := strings.SplitN(desc, ":", 2)
-				if len(parts) == 2 {
-					return strings.TrimSpace(parts[1])
-				}
+			desc = strings.TrimSpace(desc)
+			if desc != "" {
+				return desc
 			}
 		}
 	}
