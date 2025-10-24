@@ -93,26 +93,53 @@ func (b *Builder) enrichAndWriteModeA(ctx context.Context, prefixes []string) er
 				rec.Lon = geo.Lon
 			}
 
-			// Enrich with RDAP (org info)
-			rdapOrg, err := b.rdapClient.OrgForPrefix(ctx, normalized)
-			if err != nil {
-				log.Printf("WARN: RDAP lookup failed for %s: %v", normalized, err)
-				// Fallback to MaxMind ASN org
-				rec.OrgName = asnName
-				rec.SourceRole = "asn_fallback"
-				rec.RIR = "UNKNOWN"
-				mu.Lock()
-				b.stats.RDAPCacheMisses++
-				b.stats.Errors++
-				mu.Unlock()
+			// Try RIPE bulk first, then fall back to RDAP
+			var rdapOrg *model.RDAPOrg
+
+			// Parse prefix for RIPE bulk lookup
+			parsedPrefix, parseErr := netip.ParsePrefix(normalized)
+			if parseErr == nil {
+				rdapOrg = b.tryRIPEBulkLookupPrefix(parsedPrefix)
+				if rdapOrg != nil {
+					mu.Lock()
+					b.stats.RIPEBulkHits++
+					// Log first few hits, then every 100th
+					if b.stats.RIPEBulkHits <= 5 || b.stats.RIPEBulkHits%100 == 0 {
+						log.Printf("INFO: RIPE bulk hit #%d for %s -> %s", b.stats.RIPEBulkHits, normalized, rdapOrg.OrgName)
+					}
+					mu.Unlock()
+				}
+			}
+
+			// Fall back to RDAP if RIPE bulk didn't find it
+			if rdapOrg == nil {
+				var rdapErr error
+				rdapOrg, rdapErr = b.rdapClient.OrgForPrefix(ctx, normalized)
+				if rdapErr != nil {
+					log.Printf("WARN: RDAP lookup failed for %s: %v", normalized, rdapErr)
+					// Fallback to MaxMind ASN org
+					rec.OrgName = asnName
+					rec.SourceRole = "asn_fallback"
+					rec.RIR = "UNKNOWN"
+					mu.Lock()
+					b.stats.RDAPCacheMisses++
+					b.stats.Errors++
+					mu.Unlock()
+				} else {
+					rec.OrgName = rdap.CleanOrgName(rdapOrg.OrgName)
+					rec.SourceRole = rdapOrg.SourceRole
+					rec.StatusLabel = rdapOrg.StatusLabel
+					rec.RIR = rdapOrg.RIR
+					mu.Lock()
+					b.stats.RDAPCacheHits++
+					mu.Unlock()
+				}
 			} else {
+				// Use RIPE bulk data
 				rec.OrgName = rdap.CleanOrgName(rdapOrg.OrgName)
 				rec.SourceRole = rdapOrg.SourceRole
 				rec.StatusLabel = rdapOrg.StatusLabel
 				rec.RIR = rdapOrg.RIR
-				mu.Lock()
-				b.stats.RDAPCacheHits++
-				mu.Unlock()
 			}
 
 			// Ensure we have at least some org name
@@ -298,13 +325,35 @@ func (b *Builder) processBlock(ctx context.Context, mu *sync.Mutex, block maxmin
 		rec.ASNName = asnName
 	}
 
-	// Enrich with RDAP
-	rdapOrg, err := b.rdapClient.OrgForIP(ctx, repIP)
-	if err != nil {
-		rec.OrgName = asnName
-		rec.SourceRole = "asn_fallback"
-		rec.RIR = "UNKNOWN"
+	// Try RIPE bulk first, then fall back to RDAP
+	rdapOrg := b.tryRIPEBulkLookup(repIP)
+	if rdapOrg != nil {
+		mu.Lock()
+		b.stats.RIPEBulkHits++
+		// Log first few hits, then every 100th
+		if b.stats.RIPEBulkHits <= 5 || b.stats.RIPEBulkHits%100 == 0 {
+			log.Printf("INFO: RIPE bulk hit #%d (Mode B block)", b.stats.RIPEBulkHits)
+		}
+		mu.Unlock()
 	} else {
+		// Fall back to RDAP
+		var err error
+		rdapOrg, err = b.rdapClient.OrgForIP(ctx, repIP)
+		if err != nil {
+			rec.OrgName = asnName
+			rec.SourceRole = "asn_fallback"
+			rec.RIR = "UNKNOWN"
+			mu.Lock()
+			b.stats.RDAPCacheMisses++
+			mu.Unlock()
+		} else {
+			mu.Lock()
+			b.stats.RDAPCacheHits++
+			mu.Unlock()
+		}
+	}
+
+	if rdapOrg != nil {
 		rec.OrgName = rdap.CleanOrgName(rdapOrg.OrgName)
 		rec.SourceRole = rdapOrg.SourceRole
 		rec.StatusLabel = rdapOrg.StatusLabel

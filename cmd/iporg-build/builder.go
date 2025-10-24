@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"iporg/pkg/iporgdb"
+	"iporg/pkg/iptoasn"
 	"iporg/pkg/model"
+	"iporg/pkg/ripebulk"
 	"iporg/pkg/sources/maxmind"
 	"iporg/pkg/sources/rdap"
 	"iporg/pkg/sources/ripe"
@@ -21,28 +23,30 @@ import (
 
 // Builder orchestrates the database build process
 type Builder struct {
-	cfg          *model.BuildConfig
-	minPrefixV4  int
-	minPrefixV6  int
-	db           *iporgdb.DB
-	maxmind      *maxmind.Readers
-	ripeClient   *ripe.Client
-	rdapClient   *rdap.CachedClient
-	stats        BuildStats
+	cfg         *model.BuildConfig
+	minPrefixV4 int
+	minPrefixV6 int
+	db          *iporgdb.DB
+	maxmind     *maxmind.Readers
+	ripeClient  *ripe.Client
+	rdapClient  *rdap.CachedClient
+	ripeBulkDB  *ripebulk.Database // Optional: RIPE bulk database for RIPE region
+	stats       BuildStats
 }
 
 // BuildStats tracks build progress
 type BuildStats struct {
-	StartTime          time.Time
-	ASNsProcessed      int
-	PrefixesFetched    int
-	PrefixesProcessed  int
-	RecordsWritten     int
-	RecordsUpdated     int
-	RecordsSkipped     int
-	RDAPCacheHits      int
-	RDAPCacheMisses    int
-	Errors             int
+	StartTime         time.Time
+	ASNsProcessed     int
+	PrefixesFetched   int
+	PrefixesProcessed int
+	RecordsWritten    int
+	RecordsUpdated    int
+	RecordsSkipped    int
+	RDAPCacheHits     int
+	RDAPCacheMisses   int
+	RIPEBulkHits      int
+	Errors            int
 }
 
 // NewBuilder creates a new database builder
@@ -83,13 +87,30 @@ func (b *Builder) Build(ctx context.Context) error {
 	// Step 4: Initialize API clients
 	b.initializeClients()
 
+	// Step 4.5: Open RIPE bulk database (optional)
+	if err := b.openRIPEBulk(); err != nil {
+		return fmt.Errorf("failed to open RIPE bulk database: %w", err)
+	}
+	if b.ripeBulkDB != nil {
+		defer b.ripeBulkDB.Close()
+	}
+
 	// Step 5: Initialize/update metadata
 	if err := b.db.InitializeMetadata(version); err != nil {
 		return fmt.Errorf("failed to initialize metadata: %w", err)
 	}
 
 	// Step 6: Fetch announced prefixes
-	allPrefixes, err := b.fetchAnnouncedPrefixes(ctx, asns)
+	var allPrefixes []string
+
+	if b.cfg.IPtoASNDBPath != "" {
+		log.Printf("INFO: Using iptoasn database: %s", b.cfg.IPtoASNDBPath)
+		allPrefixes, err = b.fetchAnnouncedPrefixesFromIPtoASN(ctx, asns)
+	} else {
+		log.Printf("INFO: Using RIPEstat API for prefix discovery")
+		allPrefixes, err = b.fetchAnnouncedPrefixes(ctx, asns)
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to fetch announced prefixes: %w", err)
 	}
@@ -198,6 +219,32 @@ func (b *Builder) initializeClients() {
 	log.Println("INFO: Initialized API clients")
 }
 
+// openRIPEBulk opens the RIPE bulk database (optional)
+func (b *Builder) openRIPEBulk() error {
+	if b.cfg.RIPEBulkDBPath == "" {
+		log.Println("INFO: RIPE bulk database not configured (will use RDAP for all regions)")
+		return nil
+	}
+
+	db, err := ripebulk.OpenDatabase(b.cfg.RIPEBulkDBPath)
+	if err != nil {
+		return fmt.Errorf("failed to open RIPE bulk database at %s: %w", b.cfg.RIPEBulkDBPath, err)
+	}
+
+	b.ripeBulkDB = db
+
+	// Log metadata
+	meta, err := db.GetMetadata()
+	if err != nil {
+		log.Printf("WARN: Failed to read RIPE bulk metadata: %v", err)
+	} else {
+		log.Printf("INFO: Opened RIPE bulk database: %d inetnums, %d orgs (built %s)",
+			meta.InetnumCount, meta.OrgCount, meta.BuildTime.Format("2006-01-02"))
+	}
+
+	return nil
+}
+
 // fetchAnnouncedPrefixes fetches all announced prefixes for the given ASNs
 func (b *Builder) fetchAnnouncedPrefixes(ctx context.Context, asns []int) ([]string, error) {
 	log.Printf("INFO: Fetching announced prefixes for %d ASNs...", len(asns))
@@ -253,6 +300,72 @@ func (b *Builder) fetchAnnouncedPrefixes(ctx context.Context, asns []int) ([]str
 		allPrefixes = append(allPrefixes, prefix)
 	}
 
+	return allPrefixes, nil
+}
+
+// fetchAnnouncedPrefixesFromIPtoASN fetches prefixes from iptoasn database
+func (b *Builder) fetchAnnouncedPrefixesFromIPtoASN(ctx context.Context, asns []int) ([]string, error) {
+	log.Printf("INFO: Fetching prefixes for %d ASNs from iptoasn database...", len(asns))
+
+	// Open iptoasn database
+	iptoasnStore, err := iptoasn.Open(b.cfg.IPtoASNDBPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open iptoasn database: %w", err)
+	}
+	defer iptoasnStore.Close()
+
+	if b.cfg.IPv4Only {
+		log.Println("INFO: IPv4-only mode enabled - skipping IPv6 prefixes")
+	}
+
+	// Fetch prefixes for each ASN
+	prefixSet := make(map[string]bool)
+
+	for _, asn := range asns {
+		b.stats.ASNsProcessed++
+
+		// Get prefixes for this ASN (raw, not collapsed)
+		prefixes, err := iptoasnStore.ListByASN(ctx, asn, false)
+		if err == model.ErrNotFound {
+			log.Printf("WARN: AS%d not found in iptoasn database", asn)
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch prefixes for AS%d: %w", asn, err)
+		}
+
+		var ipv4Count, ipv6Count int
+		for _, prefix := range prefixes {
+			// Skip IPv6 if IPv4-only mode is enabled
+			if b.cfg.IPv4Only && isIPv6Prefix(prefix.CIDR) {
+				ipv6Count++
+				continue
+			}
+
+			prefixSet[prefix.CIDR] = true
+
+			if isIPv6Prefix(prefix.CIDR) {
+				ipv6Count++
+			} else {
+				ipv4Count++
+			}
+		}
+
+		b.stats.PrefixesFetched += len(prefixes)
+		if b.cfg.IPv4Only {
+			log.Printf("INFO: AS%d: %d IPv4 prefixes (%d IPv6 skipped)", asn, ipv4Count, ipv6Count)
+		} else {
+			log.Printf("INFO: AS%d: %d IPv4, %d IPv6 prefixes", asn, ipv4Count, ipv6Count)
+		}
+	}
+
+	// Convert to slice
+	allPrefixes := make([]string, 0, len(prefixSet))
+	for prefix := range prefixSet {
+		allPrefixes = append(allPrefixes, prefix)
+	}
+
+	log.Printf("INFO: Total unique prefixes from iptoasn: %d", len(allPrefixes))
 	return allPrefixes, nil
 }
 
@@ -319,6 +432,89 @@ func sortPrefixesBySpecificity(prefixes []string) []string {
 	return result
 }
 
+// tryRIPEBulkLookup attempts to fetch org info from RIPE bulk database
+// Returns nil if RIPE bulk is not configured or IP not found
+func (b *Builder) tryRIPEBulkLookup(ip netip.Addr) *model.RDAPOrg {
+	if b.ripeBulkDB == nil {
+		return nil
+	}
+
+	// IPv6 not supported in RIPE bulk yet
+	if !ip.Is4() {
+		return nil
+	}
+
+	match, err := b.ripeBulkDB.LookupIP(ip)
+	if err != nil {
+		// Not found in RIPE region or error
+		return nil
+	}
+
+	// Filter out RIPE's placeholder entries for non-RIPE address space
+	// These are ranges that RIPE tracks but doesn't manage (ARIN, APNIC, etc.)
+	if isRIPEPlaceholder(match.OrgName) {
+		return nil
+	}
+
+	// Convert RIPE bulk match to RDAPOrg format
+	return &model.RDAPOrg{
+		OrgName:     match.OrgName,
+		RIR:         "RIPE",
+		SourceRole:  "ripe_bulk", // Custom source role
+		StatusLabel: match.Status,
+	}
+}
+
+// tryRIPEBulkLookupPrefix attempts to fetch org info from RIPE bulk database for a prefix
+// Returns nil if RIPE bulk is not configured or prefix not found
+func (b *Builder) tryRIPEBulkLookupPrefix(prefix netip.Prefix) *model.RDAPOrg {
+	if b.ripeBulkDB == nil {
+		return nil
+	}
+
+	// IPv6 not supported in RIPE bulk yet
+	if !prefix.Addr().Is4() {
+		return nil
+	}
+
+	match, err := b.ripeBulkDB.LookupPrefix(prefix)
+	if err != nil {
+		// Not found in RIPE region or error
+		return nil
+	}
+
+	// Filter out RIPE's placeholder entries for non-RIPE address space
+	if isRIPEPlaceholder(match.OrgName) {
+		return nil
+	}
+
+	// Convert RIPE bulk match to RDAPOrg format
+	return &model.RDAPOrg{
+		OrgName:     match.OrgName,
+		RIR:         "RIPE",
+		SourceRole:  "ripe_bulk",
+		StatusLabel: match.Status,
+	}
+}
+
+// isRIPEPlaceholder checks if an organization name is a RIPE placeholder
+// for non-RIPE address space (ARIN, APNIC, etc.)
+func isRIPEPlaceholder(orgName string) bool {
+	placeholders := []string{
+		"NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK",
+		"UNALLOCATED",
+		"RESERVED",
+	}
+
+	for _, placeholder := range placeholders {
+		if orgName == placeholder {
+			return true
+		}
+	}
+
+	return false
+}
+
 // printSummary prints build statistics
 func (b *Builder) printSummary() {
 	elapsed := time.Since(b.stats.StartTime)
@@ -333,6 +529,9 @@ func (b *Builder) printSummary() {
 	fmt.Printf("Records written:        %d\n", b.stats.RecordsWritten)
 	fmt.Printf("Records updated:        %d\n", b.stats.RecordsUpdated)
 	fmt.Printf("Records skipped:        %d\n", b.stats.RecordsSkipped)
+	if b.ripeBulkDB != nil {
+		fmt.Printf("RIPE bulk hits:         %d\n", b.stats.RIPEBulkHits)
+	}
 	fmt.Printf("RDAP cache hits:        %d\n", b.stats.RDAPCacheHits)
 	fmt.Printf("RDAP cache misses:      %d\n", b.stats.RDAPCacheMisses)
 	fmt.Printf("Errors:                 %d\n", b.stats.Errors)

@@ -20,20 +20,20 @@ type Result struct {
 
 // Pool represents a worker pool with rate limiting
 type Pool struct {
-	workers     int
-	limiter     *rate.Limiter
-	semaphore   chan struct{}
-	results     chan Result
-	wg          sync.WaitGroup
-	ctx         context.Context
-	cancel      context.CancelFunc
+	workers   int
+	limiter   *rate.Limiter
+	semaphore chan struct{}
+	results   chan Result
+	wg        sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 // Config contains configuration for a worker pool
 type Config struct {
-	Workers       int     // Number of concurrent workers
-	RateLimit     float64 // Requests per second (0 = no limit)
-	BurstSize     int     // Burst size for rate limiter
+	Workers   int     // Number of concurrent workers
+	RateLimit float64 // Requests per second (0 = no limit)
+	BurstSize int     // Burst size for rate limiter
 }
 
 // NewPool creates a new worker pool

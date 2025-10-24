@@ -13,8 +13,8 @@ import (
 
 // Metadata keys
 const (
-	metaKeySchema        = "schema"
-	metaKeyBuiltAt       = "built_at"
+	metaKeySchema         = "schema"
+	metaKeyBuiltAt        = "built_at"
 	metaKeyBuilderVersion = "builder_version"
 )
 

@@ -11,6 +11,10 @@ build:
 	@go build -o bin/iporg-build ./cmd/iporg-build
 	@go build -o bin/iporg-lookup ./cmd/iporg-lookup
 	@go build -o bin/iporg-bulk ./cmd/iporg-bulk
+	@go build -o bin/iptoasn-build ./cmd/iptoasn-build
+	@go build -o bin/iptoasn-query ./cmd/iptoasn-query
+	@go build -o bin/ripe-bulk-build ./cmd/ripe-bulk-build
+	@go build -o bin/ripe-bulk-query ./cmd/ripe-bulk-query
 	@echo "Build complete. Binaries in ./bin/"
 
 # Run tests
@@ -32,13 +36,18 @@ install:
 	@go install ./cmd/iporg-build
 	@go install ./cmd/iporg-lookup
 	@go install ./cmd/iporg-bulk
+	@go install ./cmd/iptoasn-build
+	@go install ./cmd/iptoasn-query
+	@go install ./cmd/ripe-bulk-build
+	@go install ./cmd/ripe-bulk-query
 	@echo "Installation complete."
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
 	@rm -rf bin/
-	@rm -rf iporgdb/
+	@rm -rf data/
+	@rm -rf cache/
 	@rm -f coverage.out coverage.html
 	@echo "Clean complete."
 

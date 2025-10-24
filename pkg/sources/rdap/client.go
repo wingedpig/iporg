@@ -188,16 +188,16 @@ type Response struct {
 
 // Entity represents an RDAP entity
 type Entity struct {
-	ObjectClassName string   `json:"objectClassName"`
-	Handle          string   `json:"handle"`
-	Roles           []string `json:"roles"`
+	ObjectClassName string        `json:"objectClassName"`
+	Handle          string        `json:"handle"`
+	Roles           []string      `json:"roles"`
 	VCardArray      []interface{} `json:"vcardArray"`
-	Entities        []Entity `json:"entities"`
-	Remarks         []Remark `json:"remarks"`
-	Links           []Link   `json:"links"`
-	Events          []Event  `json:"events"`
-	Status          []string `json:"status"`
-	Port43          string   `json:"port43"`
+	Entities        []Entity      `json:"entities"`
+	Remarks         []Remark      `json:"remarks"`
+	Links           []Link        `json:"links"`
+	Events          []Event       `json:"events"`
+	Status          []string      `json:"status"`
+	Port43          string        `json:"port43"`
 }
 
 // Remark represents an RDAP remark

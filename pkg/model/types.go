@@ -41,23 +41,25 @@ type Stats struct {
 // BuildConfig contains configuration for the build process
 type BuildConfig struct {
 	// Input files
-	ASNFile     string
-	MMDBASNPath string
-	MMDBCityPath string
+	ASNFile       string
+	MMDBASNPath   string
+	MMDBCityPath  string
+	IPtoASNDBPath string // Optional: use iptoasn database instead of RIPEstat API
+	RIPEBulkDBPath string // Optional: use RIPE bulk database instead of RDAP for RIPE region
 
 	// Output
 	DBPath string
 
 	// Processing options
-	Workers       int
-	CacheTTL      time.Duration
+	Workers        int
+	CacheTTL       time.Duration
 	SplitByMaxMind bool // Mode B: split by MaxMind city blocks
 	IPv4Only       bool // Skip IPv6 prefixes entirely
 
 	// API configuration
-	RIPEBaseURL     string
+	RIPEBaseURL      string
 	RDAPBootstrapURL string
-	UserAgent       string
+	UserAgent        string
 
 	// Rate limiting
 	RDAPRateLimit float64 // requests per second
@@ -73,25 +75,25 @@ type RDAPOrg struct {
 
 // ASNPrefixes represents announced prefixes for an ASN
 type ASNPrefixes struct {
-	ASN      int
-	Prefixes []string // CIDR notation
+	ASN       int
+	Prefixes  []string // CIDR notation
 	FetchedAt time.Time
 }
 
 // LookupResult is the output format for IP lookups
 type LookupResult struct {
-	IP          string  `json:"ip"`
-	ASN         int     `json:"asn"`
-	ASNName     string  `json:"asn_name"`
-	OrgName     string  `json:"org_name"`
-	RIR         string  `json:"rir"`
-	Country     string  `json:"country"`
-	Region      string  `json:"region,omitempty"`
-	City        string  `json:"city,omitempty"`
-	Lat         float64 `json:"lat,omitempty"`
-	Lon         float64 `json:"lon,omitempty"`
-	Prefix      string  `json:"prefix"`
-	SourceRole  string  `json:"source_role"`
+	IP         string  `json:"ip"`
+	ASN        int     `json:"asn"`
+	ASNName    string  `json:"asn_name"`
+	OrgName    string  `json:"org_name"`
+	RIR        string  `json:"rir"`
+	Country    string  `json:"country"`
+	Region     string  `json:"region,omitempty"`
+	City       string  `json:"city,omitempty"`
+	Lat        float64 `json:"lat,omitempty"`
+	Lon        float64 `json:"lon,omitempty"`
+	Prefix     string  `json:"prefix"`
+	SourceRole string  `json:"source_role"`
 }
 
 // Error types

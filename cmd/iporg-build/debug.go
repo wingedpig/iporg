@@ -17,7 +17,7 @@ import (
 
 // RunDebug performs debugging checks
 func RunDebug(ctx context.Context, ip, asnPath, cityPath, dbPath string, asn int, ripeBase string) error {
-	fmt.Println("=== IP Organization Debug Tool ===\n")
+	fmt.Println("=== IP Organization Debug Tool ===")
 
 	parsedIP, err := netip.ParseAddr(ip)
 	if err != nil {

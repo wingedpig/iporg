@@ -176,19 +176,19 @@ func (c *Client) FetchAnnouncedPrefixesForASNs(ctx context.Context, asns []int, 
 type announcedPrefixesResponse struct {
 	Data *struct {
 		Prefixes []struct {
-			Prefix string `json:"prefix"`
+			Prefix    string `json:"prefix"`
 			Timelines []struct {
 				StartTime string `json:"starttime"`
 				EndTime   string `json:"endtime"`
 			} `json:"timelines"`
 		} `json:"prefixes"`
-		Resource     string `json:"resource"`
-		QueryTime    string `json:"query_time"`
-		LatestTime   string `json:"latest_time"`
+		Resource   string `json:"resource"`
+		QueryTime  string `json:"query_time"`
+		LatestTime string `json:"latest_time"`
 	} `json:"data"`
-	Messages [][]interface{} `json:"messages"`
-	Version  string          `json:"version"`
-	Status   string          `json:"status"`
-	StatusCode int           `json:"status_code"`
-	Time     string          `json:"time"`
+	Messages   [][]interface{} `json:"messages"`
+	Version    string          `json:"version"`
+	Status     string          `json:"status"`
+	StatusCode int             `json:"status_code"`
+	Time       string          `json:"time"`
 }

@@ -57,6 +57,8 @@ Build Options:
   --mmdb-asn string              Path to MaxMind GeoLite2-ASN.mmdb
   --mmdb-city string             Path to MaxMind GeoLite2-City.mmdb
   --db string                    Path to LevelDB database (default: ./iporgdb)
+  --iptoasn-db string            Use iptoasn database for prefixes (default: RIPEstat API)
+  --ripe-bulk-db string          Use RIPE bulk database for RIPE region (default: RDAP)
   --workers int                  Number of concurrent workers (default: 16)
   --cache-ttl duration           Cache TTL for RDAP (default: 168h)
   --ipv4-only                    Skip IPv6 prefixes (default: true)
@@ -69,9 +71,13 @@ Build Options:
   --user-agent string            User-Agent header (default: iporg-build/version)
 
 Examples:
-  # Build database for specific ASNs
+  # Build database for specific ASNs (using RIPEstat API)
   iporg-build build --asn-file=asns.txt --mmdb-asn=GeoLite2-ASN.mmdb \
     --mmdb-city=GeoLite2-City.mmdb --db=./data/iporgdb
+
+  # Build using iptoasn database (faster, no API rate limits)
+  iporg-build build --asn-file=asns.txt --mmdb-asn=GeoLite2-ASN.mmdb \
+    --mmdb-city=GeoLite2-City.mmdb --db=./data/iporgdb --iptoasn-db=./iptoasndb
 
   # Build with Mode B (better geo accuracy)
   iporg-build build --asn-file=asns.txt --mmdb-asn=... --mmdb-city=... \
@@ -99,6 +105,10 @@ func buildCmd() {
 
 	// Optional flags
 	fs.StringVar(&cfg.DBPath, "db", "./iporgdb", "Path to LevelDB database")
+	var iptoasnDB string
+	fs.StringVar(&iptoasnDB, "iptoasn-db", "", "Use iptoasn database for prefixes instead of RIPEstat API")
+	var ripeBulkDB string
+	fs.StringVar(&ripeBulkDB, "ripe-bulk-db", "", "Use RIPE bulk database for RIPE region instead of RDAP")
 	fs.IntVar(&cfg.Workers, "workers", 16, "Number of concurrent workers")
 	var cacheTTL string
 	fs.StringVar(&cacheTTL, "cache-ttl", "168h", "Cache TTL for RDAP")
@@ -133,6 +143,12 @@ func buildCmd() {
 	if err != nil {
 		log.Fatalf("ERROR: Invalid cache-ttl: %v", err)
 	}
+
+	// Set iptoasn database path
+	cfg.IPtoASNDBPath = iptoasnDB
+
+	// Set RIPE bulk database path
+	cfg.RIPEBulkDBPath = ripeBulkDB
 
 	// Run the build
 	ctx := context.Background()
