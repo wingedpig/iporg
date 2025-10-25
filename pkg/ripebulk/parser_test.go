@@ -251,3 +251,96 @@ func TestUint32AddrConversion(t *testing.T) {
 		})
 	}
 }
+
+// TestParseInetnumsZeroStart tests that ranges starting at 0.0.0.0 are not dropped
+func TestParseInetnumsZeroStart(t *testing.T) {
+	input := `
+inetnum:        0.0.0.0 - 0.255.255.255
+netname:        ZERO-BLOCK
+status:         ALLOCATED-UNSPECIFIED
+country:        EU
+
+inetnum:        1.0.0.0 - 1.0.0.255
+netname:        NORMAL-BLOCK
+status:         ASSIGNED-PA
+country:        US
+
+`
+
+	inetnums, err := ParseInetnums(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ParseInetnums failed: %v", err)
+	}
+
+	if len(inetnums) != 2 {
+		t.Fatalf("Expected 2 inetnums, got %d", len(inetnums))
+	}
+
+	// Check that 0.0.0.0 range was included
+	found000 := false
+	for _, inet := range inetnums {
+		if inet.Start == 0 {
+			found000 = true
+			if inet.Netname != "ZERO-BLOCK" {
+				t.Errorf("Expected netname 'ZERO-BLOCK', got '%s'", inet.Netname)
+			}
+			expectedEnd := AddrToUint32(netip.MustParseAddr("0.255.255.255"))
+			if inet.End != expectedEnd {
+				t.Errorf("Expected end %d, got %d", expectedEnd, inet.End)
+			}
+		}
+	}
+
+	if !found000 {
+		t.Error("0.0.0.0 range was dropped (regression: Start > 0 check)")
+	}
+}
+
+// TestParseInetnumsRemarks tests that remarks are extracted from inetnum objects
+func TestParseInetnumsRemarks(t *testing.T) {
+	input := `
+inetnum:        185.93.0.0 - 185.93.3.255
+netname:        CDN77-ATLANTA-1
+status:         ASSIGNED-PA
+country:        US
+remarks:        CDN77.com
+remarks:        Additional remark
+
+inetnum:        192.0.2.0 - 192.0.2.255
+netname:        TEST-NET
+org:            ORG-TEST1-RIPE
+status:         ASSIGNED-PA
+country:        GB
+
+`
+
+	inetnums, err := ParseInetnums(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ParseInetnums failed: %v", err)
+	}
+
+	if len(inetnums) != 2 {
+		t.Fatalf("Expected 2 inetnums, got %d", len(inetnums))
+	}
+
+	// Check first inetnum has remarks
+	inet1 := inetnums[0]
+	if inet1.Netname != "CDN77-ATLANTA-1" {
+		t.Errorf("Expected netname 'CDN77-ATLANTA-1', got '%s'", inet1.Netname)
+	}
+	if len(inet1.Remarks) != 2 {
+		t.Fatalf("Expected 2 remarks, got %d", len(inet1.Remarks))
+	}
+	if inet1.Remarks[0] != "CDN77.com" {
+		t.Errorf("Expected first remark 'CDN77.com', got '%s'", inet1.Remarks[0])
+	}
+	if inet1.Remarks[1] != "Additional remark" {
+		t.Errorf("Expected second remark 'Additional remark', got '%s'", inet1.Remarks[1])
+	}
+
+	// Check second inetnum has no remarks
+	inet2 := inetnums[1]
+	if len(inet2.Remarks) != 0 {
+		t.Errorf("Expected 0 remarks for inet2, got %d", len(inet2.Remarks))
+	}
+}

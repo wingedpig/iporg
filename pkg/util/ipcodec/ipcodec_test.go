@@ -70,6 +70,18 @@ func TestCIDRToRange(t *testing.T) {
 			wantStart: "2001:4860:4860::8888",
 			wantEnd:   "2001:4860:4860::8888",
 		},
+		{
+			name:      "IPv6 /32 (regression: large host bit count)",
+			cidr:      "2001:db8::/32",
+			wantStart: "2001:db8::",
+			wantEnd:   "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff",
+		},
+		{
+			name:      "IPv6 /48",
+			cidr:      "2001:db8:1234::/48",
+			wantStart: "2001:db8:1234::",
+			wantEnd:   "2001:db8:1234:ffff:ffff:ffff:ffff:ffff",
+		},
 	}
 
 	for _, tt := range tests {

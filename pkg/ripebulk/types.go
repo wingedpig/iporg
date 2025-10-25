@@ -7,12 +7,14 @@ import (
 
 // Inetnum represents an IPv4 range from RIPE inetnum object
 type Inetnum struct {
-	Start   uint32 // Start IP (big-endian uint32)
-	End     uint32 // End IP (big-endian uint32, inclusive)
-	OrgID   string // Organisation ID (e.g., "ORG-EA123-RIPE")
-	Status  string // Status (e.g., ASSIGNED-PA, SUB-ALLOCATED-PA, ALLOCATED-PA, LEGACY)
-	Country string // Country code (2-letter ISO, may be empty)
-	Netname string // Network name
+	Start   uint32   // Start IP (big-endian uint32)
+	End     uint32   // End IP (big-endian uint32, inclusive)
+	OrgID   string   // Organisation ID (e.g., "ORG-EA123-RIPE")
+	Status  string   // Status (e.g., ASSIGNED-PA, SUB-ALLOCATED-PA, ALLOCATED-PA, LEGACY)
+	Country string   // Country code (2-letter ISO, may be empty)
+	Netname string   // Network name
+	Descr   string   // Description (often contains organization name)
+	Remarks []string // Remarks (for extracting organization info when OrgID is missing)
 }
 
 // Organisation represents a RIPE organisation object

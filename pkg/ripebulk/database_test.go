@@ -342,3 +342,106 @@ func TestInetnumWithoutOrg(t *testing.T) {
 		t.Errorf("Expected 'LEGACY', got '%s'", match.Status)
 	}
 }
+
+func TestIsValidOrgRemark(t *testing.T) {
+	tests := []struct {
+		remark   string
+		expected bool
+	}{
+		// Valid org names
+		{"Amazon.com, Inc.", true},
+		{"CDN77.com", true},
+		{"Google LLC", true},
+		{"Example Corporation", true},
+		{"BT-Central-Plus", true},
+
+		// Invalid - separators
+		{"------------------------------------------------------", false},
+		{"****************************", false},
+		{"==================================================", false},
+		{"__________________________________________________", false},
+		{"###################################################", false},
+
+		// Invalid - URLs
+		{"http://www.example.com", false},
+		{"https://www.example.com", false},
+
+		// Invalid - email addresses and mailto
+		{"Please send abuse notification to abuse@bt.net<mailto:abuse@bt.net>", false},
+		{"contact@example.com", false},
+		{"mailto:info@example.com", false},
+
+		// Invalid - instructional text
+		{"Please send abuse to abuse@example.com", false},
+		{"For registration information,", false},
+		{"You can consult the following sources:", false},
+		{"Abuse notifications should be sent to", false},
+		{"Contact us at support@example.com", false},
+
+		// Invalid - RIPE administrative comments
+		{"* THIS OBJECT IS MODIFIED", false},
+		{"* Please note that all data...", false},
+		{"  * To view the original object...", false},
+
+		// Invalid - lines starting with dashes (separators, certificates)
+		{"-----BEGIN CERTIFICATE-----", false},
+		{"-----END CERTIFICATE-----", false},
+		{"----------------------------", false},
+		{"- This is a note", false},
+
+		// Invalid - too short
+		{"ab", false},
+		{"", false},
+
+		// Edge cases
+		{"ABC", true},                              // Exactly 3 chars - valid
+		{"A-B-C", true},                            // Contains dashes but not 80% - valid
+		{"---------------------- Note", false},      // Mostly dashes - invalid
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.remark, func(t *testing.T) {
+			result := isValidOrgRemark(tt.remark)
+			if result != tt.expected {
+				t.Errorf("isValidOrgRemark(%q) = %v, want %v", tt.remark, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNonRIPEManagedBlock(t *testing.T) {
+	// Create temporary database
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.ldb")
+
+	// Create a NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK entry (should be filtered out)
+	inetnums := []Inetnum{
+		{
+			Start:   AddrToUint32(netip.MustParseAddr("32.0.0.0")),
+			End:     AddrToUint32(netip.MustParseAddr("36.255.91.255")),
+			OrgID:   "",
+			Status:  "ALLOCATED UNSPECIFIED",
+			Country: "EU",
+			Netname: "NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK",
+			Remarks: []string{"------------------------------------------------------", "Not managed by RIPE"},
+		},
+	}
+
+	// Build database
+	db, err := BuildDatabase(dbPath, inetnums, map[string]Organisation{})
+	if err != nil {
+		t.Fatalf("BuildDatabase failed: %v", err)
+	}
+	defer db.Close()
+
+	// Lookup IP in the NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK range
+	match, err := db.LookupIP(netip.MustParseAddr("32.190.240.23"))
+	if err != nil {
+		t.Fatalf("LookupIP failed: %v", err)
+	}
+
+	// Should return nil (no match) for non-RIPE managed blocks
+	if match != nil {
+		t.Errorf("Expected nil for NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK, got org '%s'", match.OrgName)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/netip"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/syndtr/goleveldb/leveldb"
@@ -52,6 +53,63 @@ func (d *Database) Close() error {
 		return d.db.Close()
 	}
 	return nil
+}
+
+// isValidOrgRemark checks if a remark is valid as an organization name
+// Filters out separator lines, URLs, and other noise
+func isValidOrgRemark(remark string) bool {
+	if len(remark) < 3 {
+		return false
+	}
+
+	// Convert to lowercase for case-insensitive checks
+	lower := strings.ToLower(remark)
+
+	// Skip URLs
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return false
+	}
+
+	// Skip email addresses and mailto links
+	if strings.Contains(lower, "mailto:") || strings.Contains(remark, "@") {
+		return false
+	}
+
+	// Skip RIPE administrative comments (lines starting with *)
+	trimmed := strings.TrimSpace(remark)
+	if strings.HasPrefix(trimmed, "*") {
+		return false
+	}
+
+	// Skip lines starting with dashes (separators, certificates, PEM blocks, etc.)
+	if strings.HasPrefix(trimmed, "-") {
+		return false
+	}
+
+	// Skip instructional/informational text
+	instructionalPrefixes := []string{
+		"please ", "for registration", "you can consult", "this network",
+		"abuse", "contact", "send ", "see ", "visit ", "refer to",
+	}
+	for _, prefix := range instructionalPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return false
+		}
+	}
+
+	// Skip separator lines (lines made mostly of dashes, asterisks, equals, etc.)
+	separatorChars := 0
+	for _, ch := range remark {
+		if ch == '-' || ch == '*' || ch == '=' || ch == '_' || ch == '#' {
+			separatorChars++
+		}
+	}
+	// If more than 80% of the line is separator characters, skip it
+	if separatorChars > len(remark)*4/5 {
+		return false
+	}
+
+	return true
 }
 
 // BuildDatabase creates a new RIPE bulk database from parsed data
@@ -310,7 +368,16 @@ func (d *Database) lookupRange(queryStart, queryEnd uint32, prefix netip.Prefix)
 		}
 	}
 
-	// Resolve organisation
+	// Skip non-RIPE managed address blocks (catch-all entries)
+	if mostSpecific.Netname == "NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK" {
+		return nil, nil // No match - caller should try other sources
+	}
+
+	// Resolve organisation with fallback hierarchy:
+	// 1. OrgID → organisation name
+	// 2. Descr (description field)
+	// 3. Valid remarks
+	// 4. Netname
 	orgName := "(no org)"
 	orgType := ""
 	if mostSpecific.OrgID != "" {
@@ -320,7 +387,27 @@ func (d *Database) lookupRange(queryStart, queryEnd uint32, prefix netip.Prefix)
 		}
 	}
 
-	// Fall back to Netname if no org
+	// Fall back to descr field (often contains organization name)
+	if orgName == "(no org)" && mostSpecific.Descr != "" {
+		descr := strings.TrimSpace(mostSpecific.Descr)
+		if isValidOrgRemark(descr) {
+			orgName = descr
+		}
+	}
+
+	// Fall back to remarks (like RDAP does)
+	if orgName == "(no org)" && len(mostSpecific.Remarks) > 0 {
+		// Use first valid remark (filter out separators and URLs)
+		for _, remark := range mostSpecific.Remarks {
+			remark = strings.TrimSpace(remark)
+			if isValidOrgRemark(remark) {
+				orgName = remark
+				break
+			}
+		}
+	}
+
+	// Fall back to Netname as last resort
 	if orgName == "(no org)" && mostSpecific.Netname != "" {
 		orgName = mostSpecific.Netname
 	}

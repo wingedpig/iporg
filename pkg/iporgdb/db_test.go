@@ -322,3 +322,102 @@ func TestStats(t *testing.T) {
 		t.Errorf("got RIR TEST count %d, want 3", stats.RecordsByRIR["TEST"])
 	}
 }
+
+// TestOverlapMultipleChildren tests the regression where inserting a less-specific range
+// only deleted the first overlapping child instead of all children
+func TestOverlapMultipleChildren(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "iporgdb-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	db, err := Open(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// First, insert three specific /24 prefixes (10.0.0.0/24, 10.0.1.0/24, 10.0.2.0/24)
+	specificPrefixes := []string{"10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"}
+	for _, cidr := range specificPrefixes {
+		prefix := netip.MustParsePrefix(cidr)
+		start := prefix.Addr()
+		// Calculate end
+		bits := prefix.Bits()
+		hostBits := 32 - bits
+		endOffset := uint32(1<<hostBits - 1)
+		startInt := uint32(start.As4()[0])<<24 | uint32(start.As4()[1])<<16 |
+			uint32(start.As4()[2])<<8 | uint32(start.As4()[3])
+		endInt := startInt + endOffset
+		end := netip.AddrFrom4([4]byte{
+			byte(endInt >> 24), byte(endInt >> 16),
+			byte(endInt >> 8), byte(endInt),
+		})
+
+		rec := &model.Record{
+			Start:       start,
+			End:         end,
+			ASN:         100,
+			OrgName:     "Specific Org",
+			Prefix:      cidr,
+			LastChecked: time.Now(),
+			Schema:      1,
+		}
+		if err := db.PutRange(rec); err != nil {
+			t.Fatalf("Failed to put specific prefix %s: %v", cidr, err)
+		}
+	}
+
+	// Now insert a less-specific /22 that covers all three /24s (10.0.0.0/22)
+	broadPrefix := netip.MustParsePrefix("10.0.0.0/22")
+	broadStart := broadPrefix.Addr()
+	broadBits := broadPrefix.Bits()
+	broadHostBits := 32 - broadBits
+	broadEndOffset := uint32(1<<broadHostBits - 1)
+	broadStartInt := uint32(broadStart.As4()[0])<<24 | uint32(broadStart.As4()[1])<<16 |
+		uint32(broadStart.As4()[2])<<8 | uint32(broadStart.As4()[3])
+	broadEndInt := broadStartInt + broadEndOffset
+	broadEnd := netip.AddrFrom4([4]byte{
+		byte(broadEndInt >> 24), byte(broadEndInt >> 16),
+		byte(broadEndInt >> 8), byte(broadEndInt),
+	})
+
+	broadRec := &model.Record{
+		Start:       broadStart,
+		End:         broadEnd,
+		ASN:         200,
+		OrgName:     "Broad Org",
+		Prefix:      "10.0.0.0/22",
+		LastChecked: time.Now(),
+		Schema:      1,
+	}
+
+	if err := db.PutRange(broadRec); err != nil {
+		t.Fatalf("Failed to put broad prefix: %v", err)
+	}
+
+	// Now verify: lookups in the /22 range should ALL return "Broad Org", not "Specific Org"
+	// This tests that all three /24s were deleted, not just the first one
+	testIPs := []string{
+		"10.0.0.100", // In first /24
+		"10.0.1.100", // In second /24
+		"10.0.2.100", // In third /24
+		"10.0.3.100", // In fourth /24 of the /22
+	}
+
+	for _, ipStr := range testIPs {
+		ip := netip.MustParseAddr(ipStr)
+		rec, err := db.GetByIP(ip)
+		if err != nil {
+			t.Fatalf("Failed to lookup %s: %v", ipStr, err)
+		}
+		if rec.OrgName != "Broad Org" {
+			t.Errorf("IP %s: got org '%s', want 'Broad Org' (children not fully deleted)",
+				ipStr, rec.OrgName)
+		}
+		if rec.ASN != 200 {
+			t.Errorf("IP %s: got ASN %d, want 200", ipStr, rec.ASN)
+		}
+	}
+}

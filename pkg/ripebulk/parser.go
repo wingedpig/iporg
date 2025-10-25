@@ -88,7 +88,8 @@ func ParseInetnums(r io.Reader) ([]Inetnum, error) {
 
 		// Empty line signals end of object
 		if line == "" {
-			if current != nil && current.Start > 0 {
+			// Accept ranges starting at 0.0.0.0 (e.g., 0.0.0.0/8 placeholders)
+			if current != nil && current.End >= current.Start {
 				inetnums = append(inetnums, *current)
 			}
 			current = nil
@@ -135,7 +136,7 @@ func ParseInetnums(r io.Reader) ([]Inetnum, error) {
 	}
 
 	// Handle final object if file doesn't end with blank line
-	if current != nil && current.Start > 0 {
+	if current != nil && current.End >= current.Start {
 		inetnums = append(inetnums, *current)
 	}
 
@@ -232,6 +233,16 @@ func appendInetnumValue(inet *Inetnum, key, value string) {
 			inet.Netname = value
 		} else {
 			inet.Netname += " " + value // Handle continuation lines
+		}
+	case "descr":
+		// Use first non-empty descr as the description
+		if inet.Descr == "" && value != "" {
+			inet.Descr = value
+		}
+	case "remarks":
+		// Collect all remarks (there can be multiple)
+		if value != "" {
+			inet.Remarks = append(inet.Remarks, value)
 		}
 	}
 }

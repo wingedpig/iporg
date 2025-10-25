@@ -246,8 +246,9 @@ func uint32ToIP(n uint32) net.IP {
 func NormalizeCIDR(ipnet *net.IPNet) string {
 	// Ensure the IP is the network address
 	ip := ipnet.IP.Mask(ipnet.Mask)
-	ones, bits := ipnet.Mask.Size()
-	return fmt.Sprintf("%s/%d", ip.String(), ones*bits/len(ip)/8)
+	ones, _ := ipnet.Mask.Size()
+	// ones is already the prefix length - no complex formula needed!
+	return fmt.Sprintf("%s/%d", ip.String(), ones)
 }
 
 // cidrToRange converts a CIDR to start and end IP addresses

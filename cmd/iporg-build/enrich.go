@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"iporg/pkg/model"
@@ -72,7 +73,10 @@ func (b *Builder) enrichAndWriteModeA(ctx context.Context, prefixes []string) er
 			}
 
 			// Enrich with MaxMind ASN
+			tStart := time.Now()
 			asn, asnName, err := b.maxmind.ASNInfo(repIP)
+			atomic.AddInt64(&b.stats.TimeMaxMindASNNanos, time.Since(tStart).Nanoseconds())
+			atomic.AddInt64(&b.stats.CallsMaxMindASN, 1)
 			if err != nil {
 				log.Printf("WARN: MaxMind ASN lookup failed for %s: %v", normalized, err)
 				// Continue without ASN info
@@ -82,7 +86,10 @@ func (b *Builder) enrichAndWriteModeA(ctx context.Context, prefixes []string) er
 			}
 
 			// Enrich with MaxMind Geo
+			tStart = time.Now()
 			geo, err := b.maxmind.Geo(repIP)
+			atomic.AddInt64(&b.stats.TimeMaxMindGeoNanos, time.Since(tStart).Nanoseconds())
+			atomic.AddInt64(&b.stats.CallsMaxMindGeo, 1)
 			if err != nil {
 				log.Printf("WARN: MaxMind geo lookup failed for %s: %v", normalized, err)
 			} else {
@@ -99,7 +106,10 @@ func (b *Builder) enrichAndWriteModeA(ctx context.Context, prefixes []string) er
 			// Parse prefix for RIPE bulk lookup
 			parsedPrefix, parseErr := netip.ParsePrefix(normalized)
 			if parseErr == nil {
+				tStart = time.Now()
 				rdapOrg = b.tryRIPEBulkLookupPrefix(parsedPrefix)
+				atomic.AddInt64(&b.stats.TimeRIPEBulkNanos, time.Since(tStart).Nanoseconds())
+				atomic.AddInt64(&b.stats.CallsRIPEBulk, 1)
 				if rdapOrg != nil {
 					mu.Lock()
 					b.stats.RIPEBulkHits++
@@ -114,7 +124,10 @@ func (b *Builder) enrichAndWriteModeA(ctx context.Context, prefixes []string) er
 			// Fall back to RDAP if RIPE bulk didn't find it
 			if rdapOrg == nil {
 				var rdapErr error
+				tStart = time.Now()
 				rdapOrg, rdapErr = b.rdapClient.OrgForPrefix(ctx, normalized)
+				atomic.AddInt64(&b.stats.TimeRDAPNanos, time.Since(tStart).Nanoseconds())
+				atomic.AddInt64(&b.stats.CallsRDAP, 1)
 				if rdapErr != nil {
 					log.Printf("WARN: RDAP lookup failed for %s: %v", normalized, rdapErr)
 					// Fallback to MaxMind ASN org
@@ -149,16 +162,20 @@ func (b *Builder) enrichAndWriteModeA(ctx context.Context, prefixes []string) er
 			}
 
 			// Write to database
-			if err := b.db.PutRange(rec); err != nil {
+			tStart = time.Now()
+			writeErr := b.db.PutRange(rec)
+			atomic.AddInt64(&b.stats.TimeDBWriteNanos, time.Since(tStart).Nanoseconds())
+			atomic.AddInt64(&b.stats.CallsDBWrite, 1)
+			if writeErr != nil {
 				// Check if this is just an overlap with a less specific range (expected)
-				if strings.Contains(err.Error(), "is covered by less specific") {
+				if strings.Contains(writeErr.Error(), "is covered by less specific") {
 					mu.Lock()
 					b.stats.RecordsSkipped++
 					b.stats.PrefixesProcessed++
 					mu.Unlock()
 					return nil
 				}
-				log.Printf("ERROR: Failed to write record for %s: %v", normalized, err)
+				log.Printf("ERROR: Failed to write record for %s: %v", normalized, writeErr)
 				mu.Lock()
 				b.stats.Errors++
 				mu.Unlock()
@@ -228,6 +245,40 @@ func (b *Builder) enrichAndWriteModeB(ctx context.Context, prefixes []string) er
 				return nil
 			}
 
+// DISABLED: 			// Fetch org data ONCE for the parent prefix before splitting
+// DISABLED: 			// This is optimization #2: avoid redundant RDAP/RIPE bulk calls per block
+// DISABLED: 			var parentOrg *model.RDAPOrg
+// DISABLED: 
+// DISABLED: 			// Try RIPE bulk first
+// DISABLED: 			tStart := time.Now()
+// DISABLED: 			parentOrg = b.tryRIPEBulkLookupPrefix(parsedPrefix)
+// DISABLED: 			atomic.AddInt64(&b.stats.TimeRIPEBulkNanos, time.Since(tStart).Nanoseconds())
+// DISABLED: 			atomic.AddInt64(&b.stats.CallsRIPEBulk, 1)
+// DISABLED: 
+// DISABLED: 			if parentOrg != nil {
+// DISABLED: 				mu.Lock()
+// DISABLED: 				b.stats.RIPEBulkHits++
+// DISABLED: 				mu.Unlock()
+// DISABLED: 			} else {
+// DISABLED: 				// Fall back to RDAP
+// DISABLED: 				tStart = time.Now()
+// DISABLED: 				parentOrg, err = b.rdapClient.OrgForPrefix(ctx, normalized)
+// DISABLED: 				atomic.AddInt64(&b.stats.TimeRDAPNanos, time.Since(tStart).Nanoseconds())
+// DISABLED: 				atomic.AddInt64(&b.stats.CallsRDAP, 1)
+// DISABLED: 
+// DISABLED: 				if err != nil {
+// DISABLED: 					log.Printf("WARN: Parent org lookup failed for %s: %v", normalized, err)
+// DISABLED: 					mu.Lock()
+// DISABLED: 					b.stats.RDAPCacheMisses++
+// DISABLED: 					mu.Unlock()
+// DISABLED: 					// Continue anyway - processBlock will handle fallback
+// DISABLED: 				} else {
+// DISABLED: 					mu.Lock()
+// DISABLED: 					b.stats.RDAPCacheHits++
+// DISABLED: 					mu.Unlock()
+// DISABLED: 				}
+// DISABLED: 			}
+
 			// Determine minimum prefix length based on IP version
 			minPrefixLen := b.minPrefixV4
 			if parsedPrefix.Addr().Is6() {
@@ -246,9 +297,11 @@ func (b *Builder) enrichAndWriteModeB(ctx context.Context, prefixes []string) er
 
 			log.Printf("INFO: Split %s into %d blocks", normalized, len(blocks))
 
-			// Process each block
+			// Process each block (look up org individually for each block)
+			// Note: We don't cache parent org because large announced prefixes often
+			// contain multiple sub-allocations with different organizations.
 			for _, block := range blocks {
-				if err := b.processBlock(ctx, &mu, block, normalized); err != nil {
+				if err := b.processBlock(ctx, &mu, block, normalized, nil); err != nil {
 					log.Printf("ERROR: Failed to process block %s: %v", block.Prefix.String(), err)
 					mu.Lock()
 					b.stats.Errors++
@@ -280,7 +333,8 @@ func (b *Builder) enrichAndWriteModeB(ctx context.Context, prefixes []string) er
 }
 
 // processBlock processes a single MaxMind block
-func (b *Builder) processBlock(ctx context.Context, mu *sync.Mutex, block maxmind.NetworkBlock, originalPrefix string) error {
+// If parentOrg is provided (non-nil), it will be used instead of fetching org data
+func (b *Builder) processBlock(ctx context.Context, mu *sync.Mutex, block maxmind.NetworkBlock, originalPrefix string, parentOrg *model.RDAPOrg) error {
 	start := block.Prefix.Addr()
 
 	// Calculate end IP from prefix
@@ -319,37 +373,53 @@ func (b *Builder) processBlock(ctx context.Context, mu *sync.Mutex, block maxmin
 	repIP := start
 
 	// Enrich with MaxMind ASN
+	tStart := time.Now()
 	asn, asnName, err := b.maxmind.ASNInfo(repIP)
+	atomic.AddInt64(&b.stats.TimeMaxMindASNNanos, time.Since(tStart).Nanoseconds())
+	atomic.AddInt64(&b.stats.CallsMaxMindASN, 1)
 	if err == nil {
 		rec.ASN = asn
 		rec.ASNName = asnName
 	}
 
-	// Try RIPE bulk first, then fall back to RDAP
-	rdapOrg := b.tryRIPEBulkLookup(repIP)
-	if rdapOrg != nil {
-		mu.Lock()
-		b.stats.RIPEBulkHits++
-		// Log first few hits, then every 100th
-		if b.stats.RIPEBulkHits <= 5 || b.stats.RIPEBulkHits%100 == 0 {
-			log.Printf("INFO: RIPE bulk hit #%d (Mode B block)", b.stats.RIPEBulkHits)
-		}
-		mu.Unlock()
+	// Use parent org if provided, otherwise fetch fresh
+	var rdapOrg *model.RDAPOrg
+	if parentOrg != nil {
+		// Reuse parent org data (optimization #2)
+		rdapOrg = parentOrg
 	} else {
-		// Fall back to RDAP
-		var err error
-		rdapOrg, err = b.rdapClient.OrgForIP(ctx, repIP)
-		if err != nil {
-			rec.OrgName = asnName
-			rec.SourceRole = "asn_fallback"
-			rec.RIR = "UNKNOWN"
+		// Parent lookup failed, try fetching for this specific block
+		tStart = time.Now()
+		rdapOrg = b.tryRIPEBulkLookup(repIP)
+		atomic.AddInt64(&b.stats.TimeRIPEBulkNanos, time.Since(tStart).Nanoseconds())
+		atomic.AddInt64(&b.stats.CallsRIPEBulk, 1)
+		if rdapOrg != nil {
 			mu.Lock()
-			b.stats.RDAPCacheMisses++
+			b.stats.RIPEBulkHits++
+			// Log first few hits, then every 100th
+			if b.stats.RIPEBulkHits <= 5 || b.stats.RIPEBulkHits%100 == 0 {
+				log.Printf("INFO: RIPE bulk hit #%d (Mode B block)", b.stats.RIPEBulkHits)
+			}
 			mu.Unlock()
 		} else {
-			mu.Lock()
-			b.stats.RDAPCacheHits++
-			mu.Unlock()
+			// Fall back to RDAP
+			var err error
+			tStart = time.Now()
+			rdapOrg, err = b.rdapClient.OrgForIP(ctx, repIP)
+			atomic.AddInt64(&b.stats.TimeRDAPNanos, time.Since(tStart).Nanoseconds())
+			atomic.AddInt64(&b.stats.CallsRDAP, 1)
+			if err != nil {
+				rec.OrgName = asnName
+				rec.SourceRole = "asn_fallback"
+				rec.RIR = "UNKNOWN"
+				mu.Lock()
+				b.stats.RDAPCacheMisses++
+				mu.Unlock()
+			} else {
+				mu.Lock()
+				b.stats.RDAPCacheHits++
+				mu.Unlock()
+			}
 		}
 	}
 
@@ -365,15 +435,19 @@ func (b *Builder) processBlock(ctx context.Context, mu *sync.Mutex, block maxmin
 	}
 
 	// Write to database
-	if err := b.db.PutRange(rec); err != nil {
+	tStart = time.Now()
+	writeErr := b.db.PutRange(rec)
+	atomic.AddInt64(&b.stats.TimeDBWriteNanos, time.Since(tStart).Nanoseconds())
+	atomic.AddInt64(&b.stats.CallsDBWrite, 1)
+	if writeErr != nil {
 		// Check if this is just an overlap with a less specific range (expected)
-		if strings.Contains(err.Error(), "is covered by less specific") {
+		if strings.Contains(writeErr.Error(), "is covered by less specific") {
 			mu.Lock()
 			b.stats.RecordsSkipped++
 			mu.Unlock()
 			return nil
 		}
-		return fmt.Errorf("failed to write block: %w", err)
+		return fmt.Errorf("failed to write block: %w", writeErr)
 	}
 
 	mu.Lock()

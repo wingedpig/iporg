@@ -1,6 +1,7 @@
 package iptoasn
 
 import (
+	"net"
 	"net/netip"
 	"strings"
 	"testing"
@@ -189,6 +190,33 @@ func mustParseAddr(t *testing.T, s string) netip.Addr {
 		t.Fatalf("failed to parse IP %s: %v", s, err)
 	}
 	return addr
+}
+
+// TestNormalizeCIDR tests that CIDR normalization correctly extracts prefix length
+func TestNormalizeCIDR(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"1.0.0.100/24", "1.0.0.0/24"},
+		{"10.0.0.0/8", "10.0.0.0/8"},
+		{"192.168.1.1/32", "192.168.1.1/32"},
+		{"8.8.8.8/16", "8.8.0.0/16"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			_, ipnet, err := net.ParseCIDR(tt.input)
+			if err != nil {
+				t.Fatalf("ParseCIDR failed: %v", err)
+			}
+
+			got := NormalizeCIDR(ipnet)
+			if got != tt.want {
+				t.Errorf("NormalizeCIDR(%s) = %s, want %s", tt.input, got, tt.want)
+			}
+		})
+	}
 }
 
 // TestMultiCIDRRange tests that a single TSV line spanning multiple CIDRs

@@ -71,15 +71,23 @@ func (d *DB) checkOverlap(newRec *model.Record) error {
 	searchKey := ipcodec.EncodeRangeKey(newRec.Start)
 	iter.Seek(searchKey)
 
-	// Also check the previous record
+	// Also check the previous record (to catch ranges that start before newRec but overlap)
 	if iter.Valid() {
 		iter.Prev()
+		// If Prev() made us invalid (we were at the first record), go back to first
+		if !iter.Valid() {
+			iter.First()
+		}
 	} else {
+		// Seek went past end, start from last record
 		iter.Last()
 	}
 
-	// Check up to 2 records: the one before and at/after start
-	for checked := 0; checked < 2 && iter.Valid(); checked++ {
+	// Keep scanning until we're past the new record's end IP
+	// Collect keys to delete to avoid iterator issues during deletion
+	var keysToDelete [][]byte
+
+	for iter.Valid() {
 		key := make([]byte, len(iter.Key()))
 		copy(key, iter.Key())
 
@@ -91,6 +99,11 @@ func (d *DB) checkOverlap(newRec *model.Record) error {
 		if err != nil {
 			iter.Next()
 			continue
+		}
+
+		// Stop scanning if we've gone past the new range's end
+		if startIP.Compare(newRec.End) > 0 {
+			break
 		}
 
 		existingRec, err := decodeRecord(ipcodec.IPToBytes(startIP), value)
@@ -123,15 +136,10 @@ func (d *DB) checkOverlap(newRec *model.Record) error {
 				return fmt.Errorf("%w: %s is covered by less specific %s",
 					model.ErrOverlap, newRec.Prefix, existingRec.Prefix)
 			} else if newPrefixLen < existingPrefixLen {
-				// New range is less specific - this shouldn't happen if we sorted correctly
-				// but if it does, replace the more specific with less specific
-				log.Printf("WARN: New range %s is less specific than existing %s (replacing)",
+				// New range is less specific - mark child for deletion
+				log.Printf("WARN: New range %s is less specific than existing %s (will delete child)",
 					newRec.Prefix, existingRec.Prefix)
-				// Delete the old range
-				if err := d.Delete(key); err != nil {
-					return fmt.Errorf("failed to delete overlapping range: %w", err)
-				}
-				return nil
+				keysToDelete = append(keysToDelete, key)
 			} else {
 				// Same specificity but different ranges - conflict
 				return fmt.Errorf("%w: %s overlaps with %s",
@@ -140,6 +148,13 @@ func (d *DB) checkOverlap(newRec *model.Record) error {
 		}
 
 		iter.Next()
+	}
+
+	// Delete all collected overlapping children after iteration completes
+	for _, key := range keysToDelete {
+		if err := d.Delete(key); err != nil {
+			return fmt.Errorf("failed to delete overlapping range: %w", err)
+		}
 	}
 
 	return nil

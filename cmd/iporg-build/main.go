@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"time"
 
@@ -69,6 +71,7 @@ Build Options:
   --rdap-bootstrap string        RDAP bootstrap URL (default: https://rdap.db.ripe.net)
   --rdap-rate-limit float        RDAP requests per second (default: 5.0)
   --user-agent string            User-Agent header (default: iporg-build/version)
+  --pprof string                 Enable pprof HTTP server (e.g., localhost:6060)
 
 Examples:
   # Build database for specific ASNs (using RIPEstat API)
@@ -87,8 +90,7 @@ Examples:
   iporg-build verify --db=./data/iporgdb
 
   # Show statistics
-  iporg-build stats --db=./data/iporgdb
-`)
+  iporg-build stats --db=./data/iporgdb`)
 }
 
 func buildCmd() {
@@ -124,7 +126,21 @@ func buildCmd() {
 	fs.Float64Var(&cfg.RDAPRateLimit, "rdap-rate-limit", 5.0, "RDAP requests per second")
 	fs.StringVar(&cfg.UserAgent, "user-agent", cfg.UserAgent, "User-Agent header")
 
+	// Profiling flag
+	var pprofAddr string
+	fs.StringVar(&pprofAddr, "pprof", "", "Enable pprof HTTP server on address (e.g., localhost:6060)")
+
 	fs.Parse(os.Args[2:])
+
+	// Start pprof server if requested
+	if pprofAddr != "" {
+		go func() {
+			log.Printf("INFO: Starting pprof server on http://%s/debug/pprof/", pprofAddr)
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+				log.Printf("WARN: pprof server failed: %v", err)
+			}
+		}()
+	}
 
 	// Validate required flags
 	if cfg.ASNFile == "" {

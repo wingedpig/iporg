@@ -69,6 +69,18 @@ type GeoInfo struct {
 	Lon     float64
 }
 
+// Equals checks if two GeoInfo structs represent the same geographic location
+func (g *GeoInfo) Equals(other *GeoInfo) bool {
+	if g == nil || other == nil {
+		return g == other
+	}
+	return g.Country == other.Country &&
+		g.Region == other.Region &&
+		g.City == other.City
+	// Note: We intentionally ignore Lat/Lon for equality
+	// because we care about semantic location (Country/Region/City)
+}
+
 // Geo returns geographic information for an IP
 func (r *Readers) Geo(ip netip.Addr) (*GeoInfo, error) {
 	netIP := net.IP(ip.AsSlice())
@@ -95,20 +107,78 @@ func (r *Readers) Geo(ip netip.Addr) (*GeoInfo, error) {
 }
 
 // Network returns the network range that contains the IP from the City database
-// This is used for Mode B splitting
-// Note: MaxMind doesn't expose the network directly via the Go library,
-// so we use a simplified approach
+// This uses binary search to approximate MaxMind's network boundaries
+// by finding where geographic information changes
 func (r *Readers) Network(ip netip.Addr) (*netip.Prefix, error) {
-	// For now, we'll just return the IP as a /32 or /128
-	// In a production implementation, you'd parse the MaxMind CSV files
-	// to get the actual network blocks
-	var prefix netip.Prefix
-	if ip.Is4() {
-		prefix = netip.PrefixFrom(ip, 32)
-	} else {
-		prefix = netip.PrefixFrom(ip, 128)
+	// Get the geo for this IP
+	baseGeo, err := r.Geo(ip)
+	if err != nil {
+		// If we can't get geo, return single IP
+		if ip.Is4() {
+			prefix := netip.PrefixFrom(ip, 32)
+			return &prefix, nil
+		}
+		prefix := netip.PrefixFrom(ip, 128)
+		return &prefix, nil
 	}
+
+	// Binary search to find the largest prefix length where geo remains constant
+	// Start with the IP itself (max prefix length)
+	minBits := 0
+	maxBits := 32
+	if ip.Is6() {
+		maxBits = 128
+	}
+
+	// Find the largest network (smallest prefix length) where edges have same geo
+	bestPrefix := maxBits
+	for bits := minBits; bits <= maxBits; bits++ {
+		testPrefix := netip.PrefixFrom(ip, bits)
+
+		// Check if start and end of this prefix have the same geo as our IP
+		startGeo, err1 := r.Geo(testPrefix.Addr())
+
+		// Get the last IP in this prefix
+		lastIP := lastAddrInPrefix(testPrefix)
+		endGeo, err2 := r.Geo(lastIP)
+
+		if err1 == nil && err2 == nil && baseGeo.Equals(startGeo) && baseGeo.Equals(endGeo) {
+			// This prefix length works, remember it and try a larger network (smaller bits)
+			bestPrefix = bits
+			// For efficiency, jump by larger increments early on
+			if bits < 16 {
+				bits += 3  // Will be incremented by loop
+			}
+		} else {
+			// Geo changed, our best guess is the previous one
+			break
+		}
+	}
+
+	prefix := netip.PrefixFrom(ip, bestPrefix)
 	return &prefix, nil
+}
+
+// lastAddrInPrefix returns the last (broadcast) address in a prefix
+func lastAddrInPrefix(prefix netip.Prefix) netip.Addr {
+	addr := prefix.Addr()
+	bits := prefix.Bits()
+
+	addrBytes := addr.AsSlice()
+	resultBytes := make([]byte, len(addrBytes))
+	copy(resultBytes, addrBytes)
+
+	// Set all host bits to 1
+	hostBits := len(addrBytes)*8 - bits
+	for i := 0; i < hostBits; i++ {
+		bitPos := bits + i
+		byteIdx := bitPos / 8
+		bitIdx := 7 - (bitPos % 8)
+		resultBytes[byteIdx] |= 1 << bitIdx
+	}
+
+	result, _ := netip.AddrFromSlice(resultBytes)
+	return result
 }
 
 // GetAllNetworks returns all MaxMind networks that intersect with a given prefix
@@ -185,9 +255,6 @@ func prefixContains(a, b netip.Prefix) bool {
 // SplitPrefixByGeo splits a large prefix into smaller geo-located blocks
 // This is used for Mode B to improve accuracy
 func (r *Readers) SplitPrefixByGeo(prefix netip.Prefix, minPrefixLen int) ([]NetworkBlock, error) {
-	// For a simple implementation, we'll just split large prefixes into smaller chunks
-	// and look up geo info for each
-
 	prefixLen := prefix.Bits()
 	if prefixLen >= minPrefixLen {
 		// Prefix is already small enough, just return it
@@ -203,9 +270,6 @@ func (r *Readers) SplitPrefixByGeo(prefix netip.Prefix, minPrefixLen int) ([]Net
 		return []NetworkBlock{block}, nil
 	}
 
-	// Split into two halves and recurse
-	var blocks []NetworkBlock
-
 	// Get the two halves
 	half1, half2 := splitPrefix(prefix)
 
@@ -214,15 +278,124 @@ func (r *Readers) SplitPrefixByGeo(prefix netip.Prefix, minPrefixLen int) ([]Net
 	if err != nil {
 		return nil, err
 	}
-	blocks = append(blocks, blocks1...)
 
 	blocks2, err := r.SplitPrefixByGeo(half2, minPrefixLen)
 	if err != nil {
 		return nil, err
 	}
+
+	// Optimization #4: Merge adjacent blocks with identical geo
+	// This is safer than early stopping - we still recurse fully,
+	// but collapse identical neighbors after the fact
+	var blocks []NetworkBlock
+	blocks = append(blocks, blocks1...)
 	blocks = append(blocks, blocks2...)
 
-	return blocks, nil
+	// Try to merge contiguous blocks with same geo
+	return mergeAdjacentBlocks(blocks), nil
+}
+
+// mergeAdjacentBlocks merges contiguous blocks with identical geo
+// This safely reduces the number of blocks without missing any boundaries
+func mergeAdjacentBlocks(blocks []NetworkBlock) []NetworkBlock {
+	if len(blocks) <= 1 {
+		return blocks
+	}
+
+	// Blocks must be sorted by start IP and be contiguous for merging
+	// The recursive split produces them in order, but let's be explicit
+	var merged []NetworkBlock
+	current := blocks[0]
+
+	for i := 1; i < len(blocks); i++ {
+		next := blocks[i]
+
+		// Check if current and next are adjacent and have same geo
+		currentEnd := lastAddrInPrefix(current.Prefix)
+		nextStart := next.Prefix.Addr()
+
+		// Are they contiguous? (current.end + 1 == next.start)
+		areContiguous := areAdjacentIPs(currentEnd, nextStart)
+
+		// Do they have same geo?
+		sameGeo := current.Country == next.Country &&
+			current.Region == next.Region &&
+			current.City == next.City
+
+		// Can we merge them into a larger prefix?
+		if areContiguous && sameGeo {
+			// Try to create a merged prefix
+			// Check if they form a valid CIDR block (power of 2 alignment)
+			if merged := tryMergePrefixes(current.Prefix, next.Prefix); merged.IsValid() {
+				current.Prefix = merged
+				// Keep current's geo (same as next's)
+				continue
+			}
+		}
+
+		// Can't merge, save current and move to next
+		merged = append(merged, current)
+		current = next
+	}
+
+	// Don't forget the last block
+	merged = append(merged, current)
+	return merged
+}
+
+// areAdjacentIPs checks if two IPs are consecutive (b = a + 1)
+func areAdjacentIPs(a, b netip.Addr) bool {
+	if a.Is4() != b.Is4() {
+		return false
+	}
+
+	aBytes := a.AsSlice()
+	bBytes := b.AsSlice()
+
+	// Add 1 to 'a' and check if it equals 'b'
+	carry := uint(1)
+	for i := len(aBytes) - 1; i >= 0; i-- {
+		sum := uint(aBytes[i]) + carry
+		if byte(sum&0xFF) != bBytes[i] {
+			return false
+		}
+		carry = sum >> 8
+	}
+
+	return carry == 0 // No overflow
+}
+
+// tryMergePrefixes attempts to merge two adjacent prefixes into a single larger prefix
+// Returns an invalid prefix if they can't be merged
+func tryMergePrefixes(a, b netip.Prefix) netip.Prefix {
+	// Can only merge if they're the same size
+	if a.Bits() != b.Bits() {
+		return netip.Prefix{}
+	}
+
+	// And if they'd form a valid parent (differ only in the last bit of the prefix)
+	parentBits := a.Bits() - 1
+	if parentBits < 0 {
+		return netip.Prefix{}
+	}
+
+	// Determine which prefix comes first
+	var first, second netip.Prefix
+	if a.Addr().Compare(b.Addr()) < 0 {
+		first, second = a, b
+	} else {
+		first, second = b, a
+	}
+
+	// Check if they are the two halves of a parent prefix
+	parentPrefix := netip.PrefixFrom(first.Addr(), parentBits)
+	half1, half2 := splitPrefix(parentPrefix)
+
+	if first == half1 && second == half2 {
+		return parentPrefix
+	}
+
+	return netip.Prefix{} // Can't merge
 }
 
 // splitPrefix splits a prefix into two halves

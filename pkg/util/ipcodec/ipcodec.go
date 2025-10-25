@@ -81,17 +81,31 @@ func CIDRToRange(cidr string) (start, end netip.Addr, err error) {
 
 	// Get the last IP in the range
 	// For IPv4: add (2^hostBits - 1) to start
-	// For IPv6: same logic
+	// For IPv6: same logic, but we can't use uint64 for large host bit counts (>64)
 	startBytes := start.AsSlice()
 	endBytes := make([]byte, len(startBytes))
 	copy(endBytes, startBytes)
 
-	// Add the offset (2^hostBits - 1) in big-endian
-	carry := uint64(1<<hostBits - 1)
-	for i := len(endBytes) - 1; i >= 0 && carry > 0; i-- {
-		sum := uint64(endBytes[i]) + carry
-		endBytes[i] = byte(sum & 0xFF)
-		carry = sum >> 8
+	// Set all host bits to 1 by working byte-by-byte
+	// This avoids uint64 overflow for IPv6 prefixes with >64 host bits
+	if hostBits > 0 {
+		// Calculate how many full bytes and remaining bits
+		fullBytes := hostBits / 8
+		remainingBits := hostBits % 8
+
+		// Set the last fullBytes to 0xFF
+		for i := len(endBytes) - 1; i >= len(endBytes)-fullBytes && i >= 0; i-- {
+			endBytes[i] = 0xFF
+		}
+
+		// Set the remaining bits in the partial byte
+		if remainingBits > 0 {
+			byteIdx := len(endBytes) - fullBytes - 1
+			if byteIdx >= 0 {
+				mask := byte((1 << remainingBits) - 1)
+				endBytes[byteIdx] |= mask
+			}
+		}
 	}
 
 	end, ok := netip.AddrFromSlice(endBytes)

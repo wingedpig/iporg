@@ -100,6 +100,15 @@ func TestAggregator_Deduplicate(t *testing.T) {
 			},
 			wantCount: 2,
 		},
+		{
+			name: "regression: large ASNs > 0x10FFFF (32-bit ASN space)",
+			input: []*model.CanonicalPrefix{
+				{CIDR: "1.0.0.0/24", ASN: 4200000000}, // Large 32-bit ASN
+				{CIDR: "1.0.0.0/24", ASN: 4200000001}, // Different large ASN
+				{CIDR: "1.0.0.0/24", ASN: 4200000000}, // Duplicate of first
+			},
+			wantCount: 2, // Should keep both distinct large ASNs, remove duplicate
+		},
 	}
 
 	for _, tt := range tests {

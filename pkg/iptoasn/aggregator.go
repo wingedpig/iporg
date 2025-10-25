@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/netip"
 	"sort"
+	"strconv"
 
 	"iporg/pkg/model"
 )
@@ -197,7 +198,9 @@ func (a *Aggregator) Deduplicate(prefixes []*model.CanonicalPrefix) []*model.Can
 	var result []*model.CanonicalPrefix
 
 	for _, p := range prefixes {
-		key := p.CIDR + "|" + string(rune(p.ASN))
+		// Use strconv.Itoa to handle full 32-bit ASN space correctly
+		// string(rune(p.ASN)) would map all ASNs > 0x10FFFF to the same replacement rune
+		key := p.CIDR + "|" + strconv.Itoa(p.ASN)
 		if !seen[key] {
 			seen[key] = true
 			result = append(result, p)

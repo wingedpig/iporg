@@ -65,6 +65,15 @@ func main() {
 	}
 
 	// Output result
+	if match == nil {
+		if *jsonOutput {
+			fmt.Println("{}")
+		} else {
+			fmt.Println("No match found (not in RIPE database)")
+		}
+		return
+	}
+
 	if *jsonOutput {
 		outputJSON(match)
 	} else {

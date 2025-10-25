@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"iporg/pkg/iporgdb"
@@ -47,6 +48,17 @@ type BuildStats struct {
 	RDAPCacheMisses   int
 	RIPEBulkHits      int
 	Errors            int
+	// Timing breakdowns - use atomic int64 for nanosecond counts
+	TimeMaxMindASNNanos   int64 // Accessed with atomic operations
+	TimeMaxMindGeoNanos   int64
+	TimeRIPEBulkNanos     int64
+	TimeRDAPNanos         int64
+	TimeDBWriteNanos      int64
+	CallsMaxMindASN       int64
+	CallsMaxMindGeo       int64
+	CallsRIPEBulk         int64
+	CallsRDAP             int64
+	CallsDBWrite          int64
 }
 
 // NewBuilder creates a new database builder
@@ -445,8 +457,8 @@ func (b *Builder) tryRIPEBulkLookup(ip netip.Addr) *model.RDAPOrg {
 	}
 
 	match, err := b.ripeBulkDB.LookupIP(ip)
-	if err != nil {
-		// Not found in RIPE region or error
+	if err != nil || match == nil {
+		// Not found in RIPE region, filtered out, or error
 		return nil
 	}
 
@@ -478,8 +490,8 @@ func (b *Builder) tryRIPEBulkLookupPrefix(prefix netip.Prefix) *model.RDAPOrg {
 	}
 
 	match, err := b.ripeBulkDB.LookupPrefix(prefix)
-	if err != nil {
-		// Not found in RIPE region or error
+	if err != nil || match == nil {
+		// Not found in RIPE region, filtered out, or error
 		return nil
 	}
 
@@ -535,6 +547,58 @@ func (b *Builder) printSummary() {
 	fmt.Printf("RDAP cache hits:        %d\n", b.stats.RDAPCacheHits)
 	fmt.Printf("RDAP cache misses:      %d\n", b.stats.RDAPCacheMisses)
 	fmt.Printf("Errors:                 %d\n", b.stats.Errors)
+
+	// Print timing breakdown
+	fmt.Println(strings.Repeat("=", 60))
+	fmt.Println("TIMING BREAKDOWN")
+	fmt.Println(strings.Repeat("=", 60))
+
+	// Convert atomic nanoseconds to Duration for reporting
+	timeMaxMindASN := time.Duration(atomic.LoadInt64(&b.stats.TimeMaxMindASNNanos))
+	timeMaxMindGeo := time.Duration(atomic.LoadInt64(&b.stats.TimeMaxMindGeoNanos))
+	timeRIPEBulk := time.Duration(atomic.LoadInt64(&b.stats.TimeRIPEBulkNanos))
+	timeRDAP := time.Duration(atomic.LoadInt64(&b.stats.TimeRDAPNanos))
+	timeDBWrite := time.Duration(atomic.LoadInt64(&b.stats.TimeDBWriteNanos))
+
+	callsMaxMindASN := atomic.LoadInt64(&b.stats.CallsMaxMindASN)
+	callsMaxMindGeo := atomic.LoadInt64(&b.stats.CallsMaxMindGeo)
+	callsRIPEBulk := atomic.LoadInt64(&b.stats.CallsRIPEBulk)
+	callsRDAP := atomic.LoadInt64(&b.stats.CallsRDAP)
+	callsDBWrite := atomic.LoadInt64(&b.stats.CallsDBWrite)
+
+	// Calculate total accumulated work time (across all parallel workers)
+	totalWork := timeMaxMindASN + timeMaxMindGeo + timeRIPEBulk + timeRDAP + timeDBWrite
+	parallelismFactor := totalWork.Seconds() / elapsed.Seconds()
+
+	fmt.Printf("MaxMind ASN lookups:    %s (%.1f%% of work) - %d calls, %.2fms avg\n",
+		timeMaxMindASN.Round(time.Millisecond),
+		100*timeMaxMindASN.Seconds()/totalWork.Seconds(),
+		callsMaxMindASN,
+		float64(timeMaxMindASN.Microseconds())/float64(callsMaxMindASN)/1000.0)
+	fmt.Printf("MaxMind Geo lookups:    %s (%.1f%% of work) - %d calls, %.2fms avg\n",
+		timeMaxMindGeo.Round(time.Millisecond),
+		100*timeMaxMindGeo.Seconds()/totalWork.Seconds(),
+		callsMaxMindGeo,
+		float64(timeMaxMindGeo.Microseconds())/float64(callsMaxMindGeo)/1000.0)
+	fmt.Printf("RIPE bulk lookups:      %s (%.1f%% of work) - %d calls, %.2fms avg\n",
+		timeRIPEBulk.Round(time.Millisecond),
+		100*timeRIPEBulk.Seconds()/totalWork.Seconds(),
+		callsRIPEBulk,
+		float64(timeRIPEBulk.Microseconds())/float64(callsRIPEBulk)/1000.0)
+	fmt.Printf("RDAP lookups:           %s (%.1f%% of work) - %d calls, %.2fms avg\n",
+		timeRDAP.Round(time.Millisecond),
+		100*timeRDAP.Seconds()/totalWork.Seconds(),
+		callsRDAP,
+		float64(timeRDAP.Microseconds())/float64(callsRDAP)/1000.0)
+	fmt.Printf("Database writes:        %s (%.1f%% of work) - %d calls, %.2fms avg\n",
+		timeDBWrite.Round(time.Millisecond),
+		100*timeDBWrite.Seconds()/totalWork.Seconds(),
+		callsDBWrite,
+		float64(timeDBWrite.Microseconds())/float64(callsDBWrite)/1000.0)
+
+	fmt.Printf("\nTotal work time:        %s (%.1fx parallelism)\n",
+		totalWork.Round(time.Millisecond),
+		parallelismFactor)
 	fmt.Println(strings.Repeat("=", 60))
 
 	if b.stats.Errors > 0 {
