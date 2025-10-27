@@ -100,12 +100,13 @@ func (b *Builder) enrichAndWriteModeA(ctx context.Context, prefixes []string) er
 				rec.Lon = geo.Lon
 			}
 
-			// Try RIPE bulk first, then fall back to RDAP
+			// Try bulk databases (RIPE, ARIN) first, then fall back to RDAP
 			var rdapOrg *model.RDAPOrg
 
-			// Parse prefix for RIPE bulk lookup
+			// Parse prefix for bulk lookup
 			parsedPrefix, parseErr := netip.ParsePrefix(normalized)
 			if parseErr == nil {
+				// Try RIPE bulk first
 				tStart = time.Now()
 				rdapOrg = b.tryRIPEBulkLookupPrefix(parsedPrefix)
 				atomic.AddInt64(&b.stats.TimeRIPEBulkNanos, time.Since(tStart).Nanoseconds())
@@ -119,9 +120,26 @@ func (b *Builder) enrichAndWriteModeA(ctx context.Context, prefixes []string) er
 					}
 					mu.Unlock()
 				}
+
+				// Try ARIN bulk if RIPE bulk didn't find it
+				if rdapOrg == nil {
+					tStart = time.Now()
+					rdapOrg = b.tryARINBulkLookupPrefix(parsedPrefix)
+					atomic.AddInt64(&b.stats.TimeARINBulkNanos, time.Since(tStart).Nanoseconds())
+					atomic.AddInt64(&b.stats.CallsARINBulk, 1)
+					if rdapOrg != nil {
+						mu.Lock()
+						b.stats.ARINBulkHits++
+						// Log first few hits, then every 100th
+						if b.stats.ARINBulkHits <= 5 || b.stats.ARINBulkHits%100 == 0 {
+							log.Printf("INFO: ARIN bulk hit #%d for %s -> %s", b.stats.ARINBulkHits, normalized, rdapOrg.OrgName)
+						}
+						mu.Unlock()
+					}
+				}
 			}
 
-			// Fall back to RDAP if RIPE bulk didn't find it
+			// Fall back to RDAP if bulk databases didn't find it
 			if rdapOrg == nil {
 				var rdapErr error
 				tStart = time.Now()
@@ -388,7 +406,8 @@ func (b *Builder) processBlock(ctx context.Context, mu *sync.Mutex, block maxmin
 		// Reuse parent org data (optimization #2)
 		rdapOrg = parentOrg
 	} else {
-		// Parent lookup failed, try fetching for this specific block
+		// Parent lookup failed, try fetching for this specific block from bulk databases
+		// Try RIPE bulk first
 		tStart = time.Now()
 		rdapOrg = b.tryRIPEBulkLookup(repIP)
 		atomic.AddInt64(&b.stats.TimeRIPEBulkNanos, time.Since(tStart).Nanoseconds())
@@ -401,8 +420,27 @@ func (b *Builder) processBlock(ctx context.Context, mu *sync.Mutex, block maxmin
 				log.Printf("INFO: RIPE bulk hit #%d (Mode B block)", b.stats.RIPEBulkHits)
 			}
 			mu.Unlock()
-		} else {
-			// Fall back to RDAP
+		}
+
+		// Try ARIN bulk if RIPE bulk didn't find it
+		if rdapOrg == nil {
+			tStart = time.Now()
+			rdapOrg = b.tryARINBulkLookup(repIP)
+			atomic.AddInt64(&b.stats.TimeARINBulkNanos, time.Since(tStart).Nanoseconds())
+			atomic.AddInt64(&b.stats.CallsARINBulk, 1)
+			if rdapOrg != nil {
+				mu.Lock()
+				b.stats.ARINBulkHits++
+				// Log first few hits, then every 100th
+				if b.stats.ARINBulkHits <= 5 || b.stats.ARINBulkHits%100 == 0 {
+					log.Printf("INFO: ARIN bulk hit #%d (Mode B block)", b.stats.ARINBulkHits)
+				}
+				mu.Unlock()
+			}
+		}
+
+		// Fall back to RDAP if bulk databases didn't find it
+		if rdapOrg == nil {
 			var err error
 			tStart = time.Now()
 			rdapOrg, err = b.rdapClient.OrgForIP(ctx, repIP)

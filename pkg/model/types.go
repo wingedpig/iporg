@@ -44,8 +44,9 @@ type BuildConfig struct {
 	ASNFile       string
 	MMDBASNPath   string
 	MMDBCityPath  string
-	IPtoASNDBPath string // Optional: use iptoasn database instead of RIPEstat API
+	IPtoASNDBPath  string // Optional: use iptoasn database instead of RIPEstat API
 	RIPEBulkDBPath string // Optional: use RIPE bulk database instead of RDAP for RIPE region
+	ARINBulkDBPath string // Optional: use ARIN bulk database instead of RDAP for ARIN region
 
 	// Output
 	DBPath string

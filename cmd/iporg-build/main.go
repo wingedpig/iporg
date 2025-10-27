@@ -111,6 +111,8 @@ func buildCmd() {
 	fs.StringVar(&iptoasnDB, "iptoasn-db", "", "Use iptoasn database for prefixes instead of RIPEstat API")
 	var ripeBulkDB string
 	fs.StringVar(&ripeBulkDB, "ripe-bulk-db", "", "Use RIPE bulk database for RIPE region instead of RDAP")
+	var arinBulkDB string
+	fs.StringVar(&arinBulkDB, "arin-bulk-db", "", "Use ARIN bulk database for ARIN region instead of RDAP")
 	fs.IntVar(&cfg.Workers, "workers", 16, "Number of concurrent workers")
 	var cacheTTL string
 	fs.StringVar(&cacheTTL, "cache-ttl", "168h", "Cache TTL for RDAP")
@@ -165,6 +167,9 @@ func buildCmd() {
 
 	// Set RIPE bulk database path
 	cfg.RIPEBulkDBPath = ripeBulkDB
+
+	// Set ARIN bulk database path
+	cfg.ARINBulkDBPath = arinBulkDB
 
 	// Run the build
 	ctx := context.Background()

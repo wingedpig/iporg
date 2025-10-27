@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"iporg/pkg/arinbulk"
 	"iporg/pkg/iporgdb"
 	"iporg/pkg/iptoasn"
 	"iporg/pkg/model"
@@ -32,6 +33,7 @@ type Builder struct {
 	ripeClient  *ripe.Client
 	rdapClient  *rdap.CachedClient
 	ripeBulkDB  *ripebulk.Database // Optional: RIPE bulk database for RIPE region
+	arinBulkDB  *arinbulk.Database // Optional: ARIN bulk database for ARIN region
 	stats       BuildStats
 }
 
@@ -47,16 +49,19 @@ type BuildStats struct {
 	RDAPCacheHits     int
 	RDAPCacheMisses   int
 	RIPEBulkHits      int
+	ARINBulkHits      int
 	Errors            int
 	// Timing breakdowns - use atomic int64 for nanosecond counts
 	TimeMaxMindASNNanos   int64 // Accessed with atomic operations
 	TimeMaxMindGeoNanos   int64
 	TimeRIPEBulkNanos     int64
+	TimeARINBulkNanos     int64
 	TimeRDAPNanos         int64
 	TimeDBWriteNanos      int64
 	CallsMaxMindASN       int64
 	CallsMaxMindGeo       int64
 	CallsRIPEBulk         int64
+	CallsARINBulk         int64
 	CallsRDAP             int64
 	CallsDBWrite          int64
 }
@@ -105,6 +110,14 @@ func (b *Builder) Build(ctx context.Context) error {
 	}
 	if b.ripeBulkDB != nil {
 		defer b.ripeBulkDB.Close()
+	}
+
+	// Step 4.6: Open ARIN bulk database (optional)
+	if err := b.openARINBulk(); err != nil {
+		return fmt.Errorf("failed to open ARIN bulk database: %w", err)
+	}
+	if b.arinBulkDB != nil {
+		defer b.arinBulkDB.Close()
 	}
 
 	// Step 5: Initialize/update metadata
@@ -234,7 +247,7 @@ func (b *Builder) initializeClients() {
 // openRIPEBulk opens the RIPE bulk database (optional)
 func (b *Builder) openRIPEBulk() error {
 	if b.cfg.RIPEBulkDBPath == "" {
-		log.Println("INFO: RIPE bulk database not configured (will use RDAP for all regions)")
+		log.Println("INFO: RIPE bulk database not configured (will use RDAP for RIPE region)")
 		return nil
 	}
 
@@ -252,6 +265,32 @@ func (b *Builder) openRIPEBulk() error {
 	} else {
 		log.Printf("INFO: Opened RIPE bulk database: %d inetnums, %d orgs (built %s)",
 			meta.InetnumCount, meta.OrgCount, meta.BuildTime.Format("2006-01-02"))
+	}
+
+	return nil
+}
+
+// openARINBulk opens the ARIN bulk database (optional)
+func (b *Builder) openARINBulk() error {
+	if b.cfg.ARINBulkDBPath == "" {
+		log.Println("INFO: ARIN bulk database not configured (will use RDAP for ARIN region)")
+		return nil
+	}
+
+	db, err := arinbulk.OpenDatabase(b.cfg.ARINBulkDBPath)
+	if err != nil {
+		return fmt.Errorf("failed to open ARIN bulk database at %s: %w", b.cfg.ARINBulkDBPath, err)
+	}
+
+	b.arinBulkDB = db
+
+	// Log metadata
+	meta, err := db.GetMetadata()
+	if err != nil {
+		log.Printf("WARN: Failed to read ARIN bulk metadata: %v", err)
+	} else {
+		log.Printf("INFO: Opened ARIN bulk database: %d networks, %d orgs (built %s)",
+			meta.NetBlockCount, meta.OrgCount, meta.BuildTime.Format("2006-01-02"))
 	}
 
 	return nil
@@ -527,6 +566,60 @@ func isRIPEPlaceholder(orgName string) bool {
 	return false
 }
 
+// tryARINBulkLookup attempts to fetch org info from ARIN bulk database
+// Returns nil if ARIN bulk is not configured or IP not found
+func (b *Builder) tryARINBulkLookup(ip netip.Addr) *model.RDAPOrg {
+	if b.arinBulkDB == nil {
+		return nil
+	}
+
+	// IPv6 not supported in ARIN bulk yet
+	if !ip.Is4() {
+		return nil
+	}
+
+	match, err := b.arinBulkDB.LookupIP(ip)
+	if err != nil || match == nil {
+		// Not found in ARIN region or error
+		return nil
+	}
+
+	// Convert ARIN bulk match to RDAPOrg format
+	return &model.RDAPOrg{
+		OrgName:     match.OrgName,
+		RIR:         "ARIN",
+		SourceRole:  "arin_bulk",
+		StatusLabel: match.NetType,
+	}
+}
+
+// tryARINBulkLookupPrefix attempts to fetch org info from ARIN bulk database for a prefix
+// Returns nil if ARIN bulk is not configured or prefix not found
+func (b *Builder) tryARINBulkLookupPrefix(prefix netip.Prefix) *model.RDAPOrg {
+	if b.arinBulkDB == nil {
+		return nil
+	}
+
+	// IPv6 not supported in ARIN bulk yet
+	if !prefix.Addr().Is4() {
+		return nil
+	}
+
+	match, err := b.arinBulkDB.LookupPrefix(prefix)
+	if err != nil || match == nil {
+		// Not found in ARIN region or error
+		return nil
+	}
+
+	// Convert ARIN bulk match to RDAPOrg format
+	return &model.RDAPOrg{
+		OrgName:     match.OrgName,
+		RIR:         "ARIN",
+		SourceRole:  "arin_bulk",
+		StatusLabel: match.NetType,
+	}
+}
+
 // printSummary prints build statistics
 func (b *Builder) printSummary() {
 	elapsed := time.Since(b.stats.StartTime)
@@ -544,6 +637,9 @@ func (b *Builder) printSummary() {
 	if b.ripeBulkDB != nil {
 		fmt.Printf("RIPE bulk hits:         %d\n", b.stats.RIPEBulkHits)
 	}
+	if b.arinBulkDB != nil {
+		fmt.Printf("ARIN bulk hits:         %d\n", b.stats.ARINBulkHits)
+	}
 	fmt.Printf("RDAP cache hits:        %d\n", b.stats.RDAPCacheHits)
 	fmt.Printf("RDAP cache misses:      %d\n", b.stats.RDAPCacheMisses)
 	fmt.Printf("Errors:                 %d\n", b.stats.Errors)
@@ -557,17 +653,19 @@ func (b *Builder) printSummary() {
 	timeMaxMindASN := time.Duration(atomic.LoadInt64(&b.stats.TimeMaxMindASNNanos))
 	timeMaxMindGeo := time.Duration(atomic.LoadInt64(&b.stats.TimeMaxMindGeoNanos))
 	timeRIPEBulk := time.Duration(atomic.LoadInt64(&b.stats.TimeRIPEBulkNanos))
+	timeARINBulk := time.Duration(atomic.LoadInt64(&b.stats.TimeARINBulkNanos))
 	timeRDAP := time.Duration(atomic.LoadInt64(&b.stats.TimeRDAPNanos))
 	timeDBWrite := time.Duration(atomic.LoadInt64(&b.stats.TimeDBWriteNanos))
 
 	callsMaxMindASN := atomic.LoadInt64(&b.stats.CallsMaxMindASN)
 	callsMaxMindGeo := atomic.LoadInt64(&b.stats.CallsMaxMindGeo)
 	callsRIPEBulk := atomic.LoadInt64(&b.stats.CallsRIPEBulk)
+	callsARINBulk := atomic.LoadInt64(&b.stats.CallsARINBulk)
 	callsRDAP := atomic.LoadInt64(&b.stats.CallsRDAP)
 	callsDBWrite := atomic.LoadInt64(&b.stats.CallsDBWrite)
 
 	// Calculate total accumulated work time (across all parallel workers)
-	totalWork := timeMaxMindASN + timeMaxMindGeo + timeRIPEBulk + timeRDAP + timeDBWrite
+	totalWork := timeMaxMindASN + timeMaxMindGeo + timeRIPEBulk + timeARINBulk + timeRDAP + timeDBWrite
 	parallelismFactor := totalWork.Seconds() / elapsed.Seconds()
 
 	fmt.Printf("MaxMind ASN lookups:    %s (%.1f%% of work) - %d calls, %.2fms avg\n",
@@ -585,6 +683,11 @@ func (b *Builder) printSummary() {
 		100*timeRIPEBulk.Seconds()/totalWork.Seconds(),
 		callsRIPEBulk,
 		float64(timeRIPEBulk.Microseconds())/float64(callsRIPEBulk)/1000.0)
+	fmt.Printf("ARIN bulk lookups:      %s (%.1f%% of work) - %d calls, %.2fms avg\n",
+		timeARINBulk.Round(time.Millisecond),
+		100*timeARINBulk.Seconds()/totalWork.Seconds(),
+		callsARINBulk,
+		float64(timeARINBulk.Microseconds())/float64(callsARINBulk)/1000.0)
 	fmt.Printf("RDAP lookups:           %s (%.1f%% of work) - %d calls, %.2fms avg\n",
 		timeRDAP.Round(time.Millisecond),
 		100*timeRDAP.Seconds()/totalWork.Seconds(),
