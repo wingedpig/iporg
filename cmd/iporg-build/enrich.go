@@ -139,6 +139,14 @@ func (b *Builder) enrichAndWriteModeA(ctx context.Context, prefixes []string) er
 				}
 			}
 
+			// Skip if bulk-only mode and no bulk coverage
+			if rdapOrg == nil && b.cfg.BulkOnly {
+				mu.Lock()
+				b.stats.RecordsSkipped++
+				mu.Unlock()
+				return nil // Skip this prefix
+			}
+
 			// Fall back to RDAP if bulk databases didn't find it
 			if rdapOrg == nil {
 				var rdapErr error
@@ -313,7 +321,7 @@ func (b *Builder) enrichAndWriteModeB(ctx context.Context, prefixes []string) er
 				return nil
 			}
 
-			log.Printf("INFO: Split %s into %d blocks", normalized, len(blocks))
+			// log.Printf("INFO: Split %s into %d blocks", normalized, len(blocks))
 
 			// Process each block (look up org individually for each block)
 			// Note: We don't cache parent org because large announced prefixes often
@@ -459,6 +467,14 @@ func (b *Builder) processBlock(ctx context.Context, mu *sync.Mutex, block maxmin
 				mu.Unlock()
 			}
 		}
+	}
+
+	// Skip if bulk-only mode and no bulk coverage
+	if rdapOrg == nil && b.cfg.BulkOnly {
+		mu.Lock()
+		b.stats.RecordsSkipped++
+		mu.Unlock()
+		return nil // Skip this block
 	}
 
 	if rdapOrg != nil {

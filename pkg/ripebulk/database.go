@@ -32,10 +32,17 @@ type Database struct {
 	path string
 }
 
-// OpenDatabase opens an existing RIPE bulk database
+// OpenDatabase opens an existing RIPE bulk database with default cache size
 func OpenDatabase(path string) (*Database, error) {
+	return OpenDatabaseWithCache(path, 128*1024*1024) // 128MB default
+}
+
+// OpenDatabaseWithCache opens with custom cache size (in bytes)
+func OpenDatabaseWithCache(path string, cacheSize int) (*Database, error) {
 	db, err := leveldb.OpenFile(path, &opt.Options{
-		Compression: opt.SnappyCompression,
+		Compression:        opt.SnappyCompression,
+		BlockCacheCapacity: cacheSize,
+		OpenFilesCacheCapacity: 500,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)

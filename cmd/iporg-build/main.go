@@ -101,12 +101,14 @@ func buildCmd() {
 	}
 
 	// Required flags
-	fs.StringVar(&cfg.ASNFile, "asn-file", "", "Path to ASN list file (required)")
+	fs.StringVar(&cfg.ASNFile, "asn-file", "", "Path to ASN list file (required unless --all-asns)")
 	fs.StringVar(&cfg.MMDBASNPath, "mmdb-asn", "", "Path to MaxMind GeoLite2-ASN.mmdb (required)")
 	fs.StringVar(&cfg.MMDBCityPath, "mmdb-city", "", "Path to MaxMind GeoLite2-City.mmdb (required)")
 
 	// Optional flags
 	fs.StringVar(&cfg.DBPath, "db", "./iporgdb", "Path to LevelDB database")
+	fs.BoolVar(&cfg.AllASNs, "all-asns", false, "Build for all ASNs from iptoasn database")
+	fs.BoolVar(&cfg.BulkOnly, "bulk-only", false, "Only process prefixes with bulk database coverage (faster)")
 	var iptoasnDB string
 	fs.StringVar(&iptoasnDB, "iptoasn-db", "", "Use iptoasn database for prefixes instead of RIPEstat API")
 	var ripeBulkDB string
@@ -145,8 +147,14 @@ func buildCmd() {
 	}
 
 	// Validate required flags
-	if cfg.ASNFile == "" {
-		log.Fatal("ERROR: --asn-file is required")
+	if !cfg.AllASNs && cfg.ASNFile == "" {
+		log.Fatal("ERROR: --asn-file is required (or use --all-asns)")
+	}
+	if cfg.AllASNs && iptoasnDB == "" {
+		log.Fatal("ERROR: --all-asns requires --iptoasn-db")
+	}
+	if cfg.BulkOnly && ripeBulkDB == "" && arinBulkDB == "" {
+		log.Fatal("ERROR: --bulk-only requires at least one of --ripe-bulk-db or --arin-bulk-db")
 	}
 	if cfg.MMDBASNPath == "" {
 		log.Fatal("ERROR: --mmdb-asn is required")

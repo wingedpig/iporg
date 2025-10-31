@@ -25,16 +25,17 @@ import (
 
 // Builder orchestrates the database build process
 type Builder struct {
-	cfg         *model.BuildConfig
-	minPrefixV4 int
-	minPrefixV6 int
-	db          *iporgdb.DB
-	maxmind     *maxmind.Readers
-	ripeClient  *ripe.Client
-	rdapClient  *rdap.CachedClient
-	ripeBulkDB  *ripebulk.Database // Optional: RIPE bulk database for RIPE region
-	arinBulkDB  *arinbulk.Database // Optional: ARIN bulk database for ARIN region
-	stats       BuildStats
+	cfg          *model.BuildConfig
+	minPrefixV4  int
+	minPrefixV6  int
+	db           *iporgdb.DB
+	maxmind      *maxmind.Readers
+	ripeClient   *ripe.Client
+	rdapClient   *rdap.CachedClient
+	ripeBulkDB   *ripebulk.Database // Optional: RIPE bulk database for RIPE region
+	arinBulkDB   *arinbulk.Database // Optional: ARIN bulk database for ARIN region
+	iptoasnStore *iptoasn.Store     // Optional: iptoasn database for prefix lookups
+	stats        BuildStats
 }
 
 // BuildStats tracks build progress
@@ -81,6 +82,14 @@ func NewBuilder(cfg *model.BuildConfig, minPrefixV4, minPrefixV6 int) *Builder {
 // Build executes the complete build pipeline
 func (b *Builder) Build(ctx context.Context) error {
 	log.Println("INFO: Starting build process...")
+
+	// Step 0.5: Open iptoasn database if configured (needed for --all-asns)
+	if err := b.openIPtoASN(); err != nil {
+		return fmt.Errorf("failed to open iptoasn database: %w", err)
+	}
+	if b.iptoasnStore != nil {
+		defer b.iptoasnStore.Close()
+	}
 
 	// Step 1: Load ASNs
 	asns, err := b.loadASNs()
@@ -152,8 +161,26 @@ func (b *Builder) Build(ctx context.Context) error {
 	return nil
 }
 
-// loadASNs loads ASNs from the input file
+// loadASNs loads ASNs from the input file or enumerates all ASNs from iptoasn database
 func (b *Builder) loadASNs() ([]int, error) {
+	// If --all-asns is specified, enumerate from iptoasn database
+	if b.cfg.AllASNs {
+		if b.iptoasnStore == nil {
+			return nil, fmt.Errorf("--all-asns requires iptoasn database, but it's not open")
+		}
+
+		log.Println("INFO: Enumerating all ASNs from iptoasn database...")
+		ctx := context.Background()
+		asns, err := b.iptoasnStore.ListASNs(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list ASNs from iptoasn: %w", err)
+		}
+
+		log.Printf("INFO: Found %d ASNs in iptoasn database", len(asns))
+		return asns, nil
+	}
+
+	// Otherwise, load from file
 	file, err := os.Open(b.cfg.ASNFile)
 	if err != nil {
 		return nil, err
@@ -251,12 +278,14 @@ func (b *Builder) openRIPEBulk() error {
 		return nil
 	}
 
-	db, err := ripebulk.OpenDatabase(b.cfg.RIPEBulkDBPath)
+	// Use large cache size (1GB) for better performance with high concurrency
+	db, err := ripebulk.OpenDatabaseWithCache(b.cfg.RIPEBulkDBPath, 1024*1024*1024)
 	if err != nil {
 		return fmt.Errorf("failed to open RIPE bulk database at %s: %w", b.cfg.RIPEBulkDBPath, err)
 	}
 
 	b.ripeBulkDB = db
+	log.Printf("INFO: Using 1GB cache for RIPE bulk database")
 
 	// Log metadata
 	meta, err := db.GetMetadata()
@@ -277,12 +306,14 @@ func (b *Builder) openARINBulk() error {
 		return nil
 	}
 
-	db, err := arinbulk.OpenDatabase(b.cfg.ARINBulkDBPath)
+	// Use large cache size (1GB) for better performance with high concurrency
+	db, err := arinbulk.OpenDatabaseWithCache(b.cfg.ARINBulkDBPath, 1024*1024*1024)
 	if err != nil {
 		return fmt.Errorf("failed to open ARIN bulk database at %s: %w", b.cfg.ARINBulkDBPath, err)
 	}
 
 	b.arinBulkDB = db
+	log.Printf("INFO: Using 1GB cache for ARIN bulk database")
 
 	// Log metadata
 	meta, err := db.GetMetadata()
@@ -291,6 +322,31 @@ func (b *Builder) openARINBulk() error {
 	} else {
 		log.Printf("INFO: Opened ARIN bulk database: %d networks, %d orgs (built %s)",
 			meta.NetBlockCount, meta.OrgCount, meta.BuildTime.Format("2006-01-02"))
+	}
+
+	return nil
+}
+
+// openIPtoASN opens the iptoasn database (optional)
+func (b *Builder) openIPtoASN() error {
+	if b.cfg.IPtoASNDBPath == "" {
+		return nil
+	}
+
+	store, err := iptoasn.Open(b.cfg.IPtoASNDBPath)
+	if err != nil {
+		return fmt.Errorf("failed to open iptoasn database at %s: %w", b.cfg.IPtoASNDBPath, err)
+	}
+
+	b.iptoasnStore = store
+
+	// Log stats
+	stats, err := store.GetStats()
+	if err != nil {
+		log.Printf("WARN: Failed to read iptoasn stats: %v", err)
+	} else {
+		log.Printf("INFO: Opened iptoasn database: %d prefixes, %d unique ASNs",
+			stats.TotalPrefixes, stats.UniqueASNs)
 	}
 
 	return nil
@@ -358,15 +414,16 @@ func (b *Builder) fetchAnnouncedPrefixes(ctx context.Context, asns []int) ([]str
 func (b *Builder) fetchAnnouncedPrefixesFromIPtoASN(ctx context.Context, asns []int) ([]string, error) {
 	log.Printf("INFO: Fetching prefixes for %d ASNs from iptoasn database...", len(asns))
 
-	// Open iptoasn database
-	iptoasnStore, err := iptoasn.Open(b.cfg.IPtoASNDBPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open iptoasn database: %w", err)
+	if b.iptoasnStore == nil {
+		return nil, fmt.Errorf("iptoasn database is not open")
 	}
-	defer iptoasnStore.Close()
 
 	if b.cfg.IPv4Only {
 		log.Println("INFO: IPv4-only mode enabled - skipping IPv6 prefixes")
+	}
+
+	if b.cfg.BulkOnly {
+		log.Println("INFO: Bulk-only mode enabled - will skip prefixes without bulk coverage during enrichment")
 	}
 
 	// Fetch prefixes for each ASN
@@ -376,7 +433,7 @@ func (b *Builder) fetchAnnouncedPrefixesFromIPtoASN(ctx context.Context, asns []
 		b.stats.ASNsProcessed++
 
 		// Get prefixes for this ASN (raw, not collapsed)
-		prefixes, err := iptoasnStore.ListByASN(ctx, asn, false)
+		prefixes, err := b.iptoasnStore.ListByASN(ctx, asn, false)
 		if err == model.ErrNotFound {
 			log.Printf("WARN: AS%d not found in iptoasn database", asn)
 			continue
@@ -392,6 +449,9 @@ func (b *Builder) fetchAnnouncedPrefixesFromIPtoASN(ctx context.Context, asns []
 				ipv6Count++
 				continue
 			}
+
+			// Note: bulk-only filtering happens during enrichment to avoid
+			// doing 1.6M database lookups here. We'll skip during enrichment.
 
 			prefixSet[prefix.CIDR] = true
 

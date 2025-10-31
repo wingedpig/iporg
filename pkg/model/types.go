@@ -56,6 +56,8 @@ type BuildConfig struct {
 	CacheTTL       time.Duration
 	SplitByMaxMind bool // Mode B: split by MaxMind city blocks
 	IPv4Only       bool // Skip IPv6 prefixes entirely
+	AllASNs        bool // Build for all ASNs from iptoasn database
+	BulkOnly       bool // Only process ASNs/prefixes with bulk database coverage
 
 	// API configuration
 	RIPEBaseURL      string

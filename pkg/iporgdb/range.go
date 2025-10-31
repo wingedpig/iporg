@@ -131,8 +131,8 @@ func (d *DB) checkOverlap(newRec *model.Record) error {
 			if newPrefixLen > existingPrefixLen {
 				// New range is more specific than existing - skip it
 				// (We process least specific first, so the existing one has broader coverage)
-				log.Printf("INFO: Skipping more specific range %s (covered by %s)",
-					newRec.Prefix, existingRec.Prefix)
+				// log.Printf("INFO: Skipping more specific range %s (covered by %s)",
+				// 	newRec.Prefix, existingRec.Prefix)
 				return fmt.Errorf("%w: %s is covered by less specific %s",
 					model.ErrOverlap, newRec.Prefix, existingRec.Prefix)
 			} else if newPrefixLen < existingPrefixLen {

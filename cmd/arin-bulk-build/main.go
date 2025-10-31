@@ -253,15 +253,6 @@ func main() {
 		log.Fatal("ERROR: Either --xml or --apikey must be provided")
 	}
 
-	// Parse XML
-	log.Printf("INFO: Parsing XML...")
-	nets, orgs, err := arinbulk.ParseXML(xmlReader)
-	if err != nil {
-		log.Fatalf("ERROR: Failed to parse XML: %v", err)
-	}
-
-	log.Printf("INFO: Parsed %d networks, %d organizations", len(nets), len(orgs))
-
 	// Remove existing database
 	if err := os.RemoveAll(*dbPath); err != nil && !os.IsNotExist(err) {
 		log.Fatalf("ERROR: Failed to remove existing database: %v", err)
@@ -272,8 +263,8 @@ func main() {
 		log.Fatalf("ERROR: Failed to create directory: %v", err)
 	}
 
-	// Build database
-	db, err := arinbulk.BuildDatabase(*dbPath, nets, orgs)
+	// Build database using streaming (low memory usage)
+	db, err := arinbulk.BuildDatabaseStreaming(*dbPath, xmlReader)
 	if err != nil {
 		log.Fatalf("ERROR: Failed to build database: %v", err)
 	}
