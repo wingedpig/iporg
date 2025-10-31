@@ -414,9 +414,11 @@ func (d *Database) lookupRange(queryStart, queryEnd uint32, prefix netip.Prefix)
 		}
 	}
 
-	// Fall back to Netname as last resort
-	if orgName == "(no org)" && mostSpecific.Netname != "" {
-		orgName = mostSpecific.Netname
+	// Don't fall back to Netname - let caller use ASN organization instead
+	// Netname is often just an internal label, not the actual organization
+	// (Netname is still available in Match.Netname for reference)
+	if orgName == "(no org)" {
+		orgName = "" // Return empty so iporg-build can use ASN org
 	}
 
 	return &Match{

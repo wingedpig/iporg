@@ -74,6 +74,7 @@ type RDAPOrg struct {
 	RIR         string // Regional Internet Registry
 	SourceRole  string // customer/registrant/asn_fallback
 	StatusLabel string // Status from RDAP (e.g., ASSIGNED-PA)
+	Country     string // Country code from RIR (preferred over MaxMind for RIR-managed space)
 }
 
 // ASNPrefixes represents announced prefixes for an ASN

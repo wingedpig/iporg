@@ -573,6 +573,7 @@ func (b *Builder) tryRIPEBulkLookup(ip netip.Addr) *model.RDAPOrg {
 		RIR:         "RIPE",
 		SourceRole:  "ripe_bulk", // Custom source role
 		StatusLabel: match.Status,
+		Country:     match.Country, // Use RIPE's country (more accurate for RIR-managed space)
 	}
 }
 
@@ -605,6 +606,7 @@ func (b *Builder) tryRIPEBulkLookupPrefix(prefix netip.Prefix) *model.RDAPOrg {
 		RIR:         "RIPE",
 		SourceRole:  "ripe_bulk",
 		StatusLabel: match.Status,
+		Country:     match.Country, // Use RIPE's country (more accurate for RIR-managed space)
 	}
 }
 
@@ -650,6 +652,7 @@ func (b *Builder) tryARINBulkLookup(ip netip.Addr) *model.RDAPOrg {
 		RIR:         "ARIN",
 		SourceRole:  "arin_bulk",
 		StatusLabel: match.NetType,
+		Country:     match.Country, // Use ARIN's country (more accurate for RIR-managed space)
 	}
 }
 
@@ -677,6 +680,7 @@ func (b *Builder) tryARINBulkLookupPrefix(prefix netip.Prefix) *model.RDAPOrg {
 		RIR:         "ARIN",
 		SourceRole:  "arin_bulk",
 		StatusLabel: match.NetType,
+		Country:     match.Country, // Use ARIN's country (more accurate for RIR-managed space)
 	}
 }
 

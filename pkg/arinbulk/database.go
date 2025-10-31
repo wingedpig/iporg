@@ -440,14 +440,99 @@ func (d *Database) LookupIP(ip netip.Addr) (*Match, error) {
 	return d.buildMatch(mostSpecific, netip.Prefix{})
 }
 
-// LookupPrefix finds the most specific network containing the prefix
+// LookupPrefix finds the most specific network that exactly matches or contains the prefix
 func (d *Database) LookupPrefix(prefix netip.Prefix) (*Match, error) {
 	if !prefix.Addr().Is4() {
 		return nil, fmt.Errorf("IPv6 not supported yet")
 	}
 
-	// Use the start IP of the prefix for lookup
-	return d.LookupIP(prefix.Addr())
+	// Calculate start and end IPs of the prefix
+	prefixStart := AddrToUint32(prefix.Addr())
+	// For a /N prefix, calculate the end IP
+	bits := prefix.Bits()
+	hostBits := 32 - bits
+	prefixEnd := prefixStart + (1 << hostBits) - 1
+
+	// Find all ranges containing this IP
+	var candidates []NetBlock
+
+	// Seek to approximately where the IP should be
+	seekKey := make([]byte, 3+4+4)
+	copy(seekKey[0:3], []byte(prefixRange))
+	binary.BigEndian.PutUint32(seekKey[3:7], prefixStart)
+	binary.BigEndian.PutUint32(seekKey[7:11], 0)
+
+	iter := d.db.NewIterator(&util.Range{
+		Start: []byte(prefixRange),
+		Limit: nil,
+	}, nil)
+	defer iter.Release()
+
+	if !iter.Seek(seekKey) {
+		iter.First()
+	}
+
+	// Check current position first (exact match or just after)
+	if iter.Valid() {
+		var net NetBlock
+		if err := msgpack.Unmarshal(iter.Value(), &net); err == nil {
+			if prefixStart >= net.Start && prefixEnd <= net.End {
+				candidates = append(candidates, net)
+			}
+		}
+	}
+
+	// Search backwards
+	iter.Seek(seekKey)
+	for iter.Prev() {
+		var net NetBlock
+		if err := msgpack.Unmarshal(iter.Value(), &net); err != nil {
+			continue
+		}
+
+		if net.Start < prefixStart && (prefixStart-net.Start) > 0x01000000 {
+			break
+		}
+
+		// Check if this range fully covers the prefix
+		if prefixStart >= net.Start && prefixEnd <= net.End {
+			candidates = append(candidates, net)
+		}
+	}
+
+	// Search forward (skip current since we already checked it)
+	iter.Seek(seekKey)
+	for iter.Next() {
+		var net NetBlock
+		if err := msgpack.Unmarshal(iter.Value(), &net); err != nil {
+			continue
+		}
+
+		if net.Start > prefixStart {
+			break
+		}
+
+		// Check if this range fully covers the prefix
+		if prefixStart >= net.Start && prefixEnd <= net.End {
+			candidates = append(candidates, net)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil, ErrNotFound
+	}
+
+	// Find most specific (smallest range) that covers the entire prefix
+	mostSpecific := candidates[0]
+	for _, c := range candidates[1:] {
+		rangeSize := c.End - c.Start
+		currentSize := mostSpecific.End - mostSpecific.Start
+		if rangeSize < currentSize {
+			mostSpecific = c
+		}
+	}
+
+	return d.buildMatch(mostSpecific, prefix)
 }
 
 func (d *Database) buildMatch(net NetBlock, queryPrefix netip.Prefix) (*Match, error) {
@@ -459,9 +544,11 @@ func (d *Database) buildMatch(net NetBlock, queryPrefix netip.Prefix) (*Match, e
 		}
 	}
 
-	// Fall back to network name if no valid org
-	if orgName == "(no org)" && net.NetName != "" {
-		orgName = net.NetName
+	// Don't fall back to NetName - let caller use ASN organization instead
+	// NetName is often just an internal label, not the actual organization
+	// (NetName is still available in Match.NetName for reference)
+	if orgName == "(no org)" {
+		orgName = "" // Return empty so iporg-build can use ASN org
 	}
 
 	return &Match{

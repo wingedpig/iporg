@@ -169,16 +169,24 @@ func (b *Builder) enrichAndWriteModeA(ctx context.Context, prefixes []string) er
 					rec.SourceRole = rdapOrg.SourceRole
 					rec.StatusLabel = rdapOrg.StatusLabel
 					rec.RIR = rdapOrg.RIR
+					// Prefer RIR country over MaxMind if provided
+					if rdapOrg.Country != "" {
+						rec.Country = rdapOrg.Country
+					}
 					mu.Lock()
 					b.stats.RDAPCacheHits++
 					mu.Unlock()
 				}
 			} else {
-				// Use RIPE bulk data
+				// Use bulk data (RIPE or ARIN)
 				rec.OrgName = rdap.CleanOrgName(rdapOrg.OrgName)
 				rec.SourceRole = rdapOrg.SourceRole
 				rec.StatusLabel = rdapOrg.StatusLabel
 				rec.RIR = rdapOrg.RIR
+				// Prefer RIR country over MaxMind (more accurate for RIR-managed space)
+				if rdapOrg.Country != "" {
+					rec.Country = rdapOrg.Country
+				}
 			}
 
 			// Ensure we have at least some org name
@@ -482,6 +490,10 @@ func (b *Builder) processBlock(ctx context.Context, mu *sync.Mutex, block maxmin
 		rec.SourceRole = rdapOrg.SourceRole
 		rec.StatusLabel = rdapOrg.StatusLabel
 		rec.RIR = rdapOrg.RIR
+		// Prefer RIR country over MaxMind if provided
+		if rdapOrg.Country != "" {
+			rec.Country = rdapOrg.Country
+		}
 	}
 
 	if rec.OrgName == "" {
