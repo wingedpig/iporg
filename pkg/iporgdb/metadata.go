@@ -7,8 +7,8 @@ import (
 	"log"
 	"time"
 
-	"iporg/pkg/model"
-	"iporg/pkg/util/ipcodec"
+	"github.com/wingedpig/iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/util/ipcodec"
 )
 
 // Metadata keys

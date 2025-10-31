@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 // Parser handles parsing iptoasn TSV format

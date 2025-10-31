@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"iporg/pkg/iporgdb"
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/iporgdb"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 // Simple example: Look up a single IP address

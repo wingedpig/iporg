@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"iporg/pkg/iptoasn"
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/iptoasn"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 // Builder coordinates the build process

@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	workers2 "iporg/pkg/util/workers"
+	workers2 "github.com/wingedpig/iporg/pkg/util/workers"
 )
 
 const (

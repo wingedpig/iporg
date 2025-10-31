@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strconv"
 
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 // Aggregator handles CIDR aggregation and collapse

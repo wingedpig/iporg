@@ -7,8 +7,8 @@ import (
 
 	"github.com/syndtr/goleveldb/leveldb/util"
 
-	"iporg/pkg/model"
-	"iporg/pkg/util/ipcodec"
+	"github.com/wingedpig/iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/util/ipcodec"
 )
 
 // PutRange stores an IP range record in the database

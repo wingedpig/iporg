@@ -9,9 +9,9 @@ import (
 	"os"
 	"sync"
 
-	"iporg/pkg/iporgdb"
-	"iporg/pkg/model"
-	"iporg/pkg/util/workers"
+	"github.com/wingedpig/iporg/pkg/iporgdb"
+	"github.com/wingedpig/iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/util/workers"
 )
 
 // Example: Process multiple IPs efficiently with concurrent lookups

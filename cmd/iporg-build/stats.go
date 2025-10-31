@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"iporg/pkg/iporgdb"
+	"github.com/wingedpig/iporg/pkg/iporgdb"
 )
 
 // RunStats displays database statistics

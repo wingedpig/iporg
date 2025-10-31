@@ -11,12 +11,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 const (
 	DefaultSourceURL = "https://iptoasn.com/data/ip2asn-v4.tsv.gz"
-	DefaultUserAgent = "iporg/iptoasn-client"
+	DefaultUserAgent = "github.com/wingedpig/iporg/iptoasn-client"
 	MaxRetries       = 3
 	RetryDelay       = 5 * time.Second
 )

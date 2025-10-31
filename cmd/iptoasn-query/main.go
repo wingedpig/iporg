@@ -9,8 +9,8 @@ import (
 	"os"
 	"strconv"
 
-	"iporg/pkg/iptoasn"
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/iptoasn"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 const version = "0.1.0"

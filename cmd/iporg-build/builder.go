@@ -13,14 +13,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"iporg/pkg/arinbulk"
-	"iporg/pkg/iporgdb"
-	"iporg/pkg/iptoasn"
-	"iporg/pkg/model"
-	"iporg/pkg/ripebulk"
-	"iporg/pkg/sources/maxmind"
-	"iporg/pkg/sources/rdap"
-	"iporg/pkg/sources/ripe"
+	"github.com/wingedpig/iporg/pkg/arinbulk"
+	"github.com/wingedpig/iporg/pkg/iporgdb"
+	"github.com/wingedpig/iporg/pkg/iptoasn"
+	"github.com/wingedpig/iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/ripebulk"
+	"github.com/wingedpig/iporg/pkg/sources/maxmind"
+	"github.com/wingedpig/iporg/pkg/sources/rdap"
+	"github.com/wingedpig/iporg/pkg/sources/ripe"
 )
 
 // Builder orchestrates the database build process

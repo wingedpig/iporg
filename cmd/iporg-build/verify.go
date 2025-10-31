@@ -6,8 +6,8 @@ import (
 	"log"
 	"net/netip"
 
-	"iporg/pkg/iporgdb"
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/iporgdb"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 // RunVerify performs consistency checks on the database

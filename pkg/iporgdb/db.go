@@ -12,8 +12,8 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/util"
 	"github.com/vmihailenco/msgpack/v5"
 
-	"iporg/pkg/model"
-	"iporg/pkg/util/ipcodec"
+	"github.com/wingedpig/iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/util/ipcodec"
 )
 
 // DB wraps a LevelDB instance for IP organization data

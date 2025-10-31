@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/netip"
 
-	"iporg/pkg/model"
-	"iporg/pkg/util/ipcodec"
+	"github.com/wingedpig/iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/util/ipcodec"
 )
 
 // GetByIP performs an IP lookup using the seek/prev algorithm

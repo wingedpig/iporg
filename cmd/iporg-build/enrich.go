@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"iporg/pkg/model"
-	"iporg/pkg/sources/maxmind"
-	"iporg/pkg/sources/rdap"
-	"iporg/pkg/util/ipcodec"
-	"iporg/pkg/util/workers"
+	"github.com/wingedpig/iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/sources/maxmind"
+	"github.com/wingedpig/iporg/pkg/sources/rdap"
+	"github.com/wingedpig/iporg/pkg/util/ipcodec"
+	"github.com/wingedpig/iporg/pkg/util/workers"
 )
 
 // enrichAndWriteModeA processes prefixes in Mode A (one record per prefix)

@@ -7,8 +7,8 @@ import (
 	"net/netip"
 	"time"
 
-	"iporg/pkg/iporgdb"
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/iporgdb"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 // CachedClient wraps an RDAP client with caching

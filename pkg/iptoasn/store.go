@@ -15,7 +15,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/util"
 	"github.com/vmihailenco/msgpack/v5"
 
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 // Store handles LevelDB storage for iptoasn data

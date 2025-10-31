@@ -8,7 +8,7 @@ import (
 	"net/netip"
 	"os"
 
-	"iporg/pkg/arinbulk"
+	"github.com/wingedpig/iporg/pkg/arinbulk"
 )
 
 const version = "1.0.0"

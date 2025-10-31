@@ -7,12 +7,12 @@ import (
 	"net/netip"
 	"sort"
 
-	"iporg/pkg/iporgdb"
-	"iporg/pkg/model"
-	"iporg/pkg/sources/maxmind"
-	"iporg/pkg/sources/rdap"
-	"iporg/pkg/sources/ripe"
-	"iporg/pkg/util/ipcodec"
+	"github.com/wingedpig/iporg/pkg/iporgdb"
+	"github.com/wingedpig/iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/sources/maxmind"
+	"github.com/wingedpig/iporg/pkg/sources/rdap"
+	"github.com/wingedpig/iporg/pkg/sources/ripe"
+	"github.com/wingedpig/iporg/pkg/util/ipcodec"
 )
 
 // RunDebug performs debugging checks

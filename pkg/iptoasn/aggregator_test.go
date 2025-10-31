@@ -3,7 +3,7 @@ package iptoasn
 import (
 	"testing"
 
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 func TestAggregator_Collapse(t *testing.T) {

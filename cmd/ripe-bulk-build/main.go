@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"iporg/pkg/ripebulk"
+	"github.com/wingedpig/iporg/pkg/ripebulk"
 )
 
 const version = "0.1.0"

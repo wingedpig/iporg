@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 func TestOpenClose(t *testing.T) {

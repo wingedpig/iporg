@@ -8,7 +8,7 @@ import (
 	"net/netip"
 	"os"
 
-	"iporg/pkg/ripebulk"
+	"github.com/wingedpig/iporg/pkg/ripebulk"
 )
 
 const version = "0.1.0"

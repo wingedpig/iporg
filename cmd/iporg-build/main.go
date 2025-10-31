@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 const version = "1.0.0"

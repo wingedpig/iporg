@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"iporg/pkg/iporgdb"
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/iporgdb"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 // Example: Output lookup results as JSON

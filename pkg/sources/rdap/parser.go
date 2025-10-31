@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"iporg/pkg/model"
+	"github.com/wingedpig/iporg/pkg/model"
 )
 
 // ParseOrg extracts organization information from an RDAP response
